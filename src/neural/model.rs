@@ -14,155 +14,197 @@ pub struct TransformerConfig {
     pub layer_norm_eps: f64,
 }
 
-pub struct NeuralTranslator {
+pub struct AdvancedNeuralTranslator {
     encoder: Arc<TransformerEncoder>,
     decoder: Arc<TransformerDecoder>,
-    embedding: Arc<nn::Embedding>,
-    position_embeddings: Arc<nn::Embedding>,
-    token_type_embeddings: Arc<nn::Embedding>,
-    layer_norm: Arc<nn::LayerNorm>,
-    dropout: f64,
-    config: TransformerConfig,
-    device: Device,
-    vocabulary: Arc<Vocabulary>,
+    context_analyzer: Arc<ContextAnalyzer>,
+    domain_adapter: Arc<DomainAdapter>,
+    morphology_handler: Arc<MorphologyHandler>,
+    optimization_engine: Arc<OptimizationEngine>,
+    cache_manager: Arc<CacheManager>,
+    metrics_collector: Arc<MetricsCollector>,
 }
 
-impl NeuralTranslator {
+impl AdvancedNeuralTranslator {
     pub fn new(config: TransformerConfig) -> Self {
         let device = Device::cuda_if_available();
         let vs = nn::VarStore::new(device);
         
-        let encoder = TransformerEncoder::new(&vs.root(), &config);
-        let decoder = TransformerDecoder::new(&vs.root(), &config);
-        
-        let embedding = nn::embedding(
-            vs.root(),
-            config.vocab_size,
-            config.hidden_size,
-            Default::default()
-        );
-        
-        let position_embeddings = nn::embedding(
-            vs.root(),
-            config.max_position_embeddings,
-            config.hidden_size,
-            Default::default()
-        );
-        
-        let token_type_embeddings = nn::embedding(
-            vs.root(),
-            config.type_vocab_size,
-            config.hidden_size,
-            Default::default()
-        );
-        
-        let layer_norm = nn::layer_norm(
-            vs.root(),
-            vec![config.hidden_size],
-            Default::default()
-        );
-        
         Self {
-            encoder: Arc::new(encoder),
-            decoder: Arc::new(decoder),
-            embedding: Arc::new(embedding),
-            position_embeddings: Arc::new(position_embeddings),
-            token_type_embeddings: Arc::new(token_type_embeddings),
-            layer_norm: Arc::new(layer_norm),
-            dropout: config.hidden_dropout_prob,
-            config,
-            device,
-            vocabulary: Arc::new(Vocabulary::new()),
+            encoder: Arc::new(TransformerEncoder::new(&vs.root(), &config)),
+            decoder: Arc::new(TransformerDecoder::new(&vs.root(), &config)),
+            context_analyzer: Arc::new(ContextAnalyzer::new(&config)),
+            domain_adapter: Arc::new(DomainAdapter::new(&config)),
+            morphology_handler: Arc::new(MorphologyHandler::new(&config)),
+            optimization_engine: Arc::new(OptimizationEngine::new(&config)),
+            cache_manager: Arc::new(CacheManager::new(&config)),
+            metrics_collector: Arc::new(MetricsCollector::new()),
         }
     }
-    
-    pub fn translate(&self, input: &Tensor) -> Result<Tensor, TranslationError> {
-        // טוקניזציה
-        let tokens = self.vocabulary.encode(input)?;
+
+    pub async fn translate(&self, input: &TranslationInput) -> Result<TranslationOutput, TranslationError> {
+        // מדידת ביצועים
+        let _metrics = self.metrics_collector.start_translation();
         
-        // אמבדינג
-        let embeddings = self.compute_embeddings(&tokens)?;
-        
-        // קידוד
-        let encoded = self.encoder.forward(&embeddings)?;
-        
-        // פענוח
-        let decoded = self.decoder.forward(&encoded)?;
-        
-        // המרה חזרה לטקסט
-        let output = self.vocabulary.decode(&decoded)?;
-        
-        Ok(output)
-    }
-    
-    fn compute_embeddings(&self, input_ids: &Tensor) -> Result<Tensor, TranslationError> {
-        let seq_length = input_ids.size()[1];
-        
-        // אמבדינג של טוקנים
-        let inputs_embeds = self.embedding.forward(input_ids);
-        
-        // אמבדינג של מיקום
-        let position_ids = Tensor::arange(seq_length, (Kind::Int64, self.device));
-        let position_embeddings = self.position_embeddings.forward(&position_ids);
-        
-        // אמבדינג של סוג טוקן
-        let token_type_ids = Tensor::zeros_like(input_ids);
-        let token_type_embeddings = self.token_type_embeddings.forward(&token_type_ids);
-        
-        // חיבור כל האמבדינגים
-        let embeddings = inputs_embeds + position_embeddings + token_type_embeddings;
-        
-        // נורמליזציה
-        let embeddings = self.layer_norm.forward(&embeddings);
-        
-        // דרופאאוט
-        let embeddings = embeddings.dropout(self.dropout, true);
-        
-        Ok(embeddings)
-    }
-    
-    pub fn train(&mut self, dataset: &TranslationDataset) -> Result<(), TranslationError> {
-        let mut opt = nn::Adam::default().build(&self.encoder.parameters(), 1e-4)?;
-        
-        for epoch in 0..self.config.num_epochs {
-            let mut total_loss = 0.0;
-            
-            for (source, target) in dataset.iter() {
-                // העברה קדימה
-                let output = self.forward_pass(&source)?;
-                
-                // חישוב שגיאה
-                let loss = self.compute_loss(&output, &target)?;
-                total_loss += loss.double_value(&[]);
-                
-                // אופטימיזציה
-                opt.backward_step(&loss);
-                
-                // עדכון משקולות
-                self.update_weights(&opt)?;
-            }
-            
-            println!("Epoch {}: Loss = {}", epoch, total_loss / dataset.len() as f64);
+        // בדיקת קאש
+        if let Some(cached) = self.cache_manager.get_translation(input).await? {
+            return Ok(cached);
         }
+
+        // ניתוח הקשר ותחום
+        let context = self.context_analyzer.analyze(input).await?;
+        let domain_info = self.domain_adapter.adapt_to_domain(&context).await?;
+
+        // טיפול במורפולוגיה
+        let morphology = self.morphology_handler.analyze(input, &context).await?;
+
+        // קידוד ופענוח
+        let encoded = self.encoder.forward_with_context(
+            input, 
+            &context,
+            &domain_info,
+            &morphology
+        ).await?;
+
+        let decoded = self.decoder.forward_with_optimization(
+            &encoded,
+            &context,
+            &domain_info,
+            &morphology,
+            self.optimization_engine.as_ref()
+        ).await?;
+
+        // אופטימיזציה סופית
+        let optimized = self.optimization_engine.optimize_translation(
+            &decoded,
+            &context,
+            &domain_info,
+            &morphology
+        ).await?;
+
+        // שמירה בקאש
+        self.cache_manager.store_translation(input, &optimized).await?;
+
+        Ok(optimized)
+    }
+
+    pub async fn train(&mut self, dataset: &TranslationDataset) -> Result<TrainingMetrics, TrainingError> {
+        let mut optimizer = self.optimization_engine.create_optimizer()?;
+        let mut total_loss = 0.0;
+        let mut accuracy = 0.0;
         
-        Ok(())
+        for batch in dataset.iter_batches() {
+            // אימון על באצ'
+            let (loss, batch_accuracy) = self.train_batch(&batch, &mut optimizer).await?;
+            total_loss += loss;
+            accuracy += batch_accuracy;
+
+            // אופטימיזציה דינמית
+            self.optimization_engine.adjust_parameters(loss, batch_accuracy).await?;
+            
+            // עדכון מטריקות
+            self.metrics_collector.record_training_progress(loss, batch_accuracy);
+        }
+
+        Ok(TrainingMetrics {
+            total_loss,
+            accuracy,
+            parameters_updated: true,
+        })
     }
-    
-    fn forward_pass(&self, input: &Tensor) -> Result<Tensor, TranslationError> {
-        let embeddings = self.compute_embeddings(input)?;
-        let encoded = self.encoder.forward(&embeddings)?;
-        let output = self.decoder.forward(&encoded)?;
-        Ok(output)
+
+    async fn train_batch(&self, batch: &TranslationBatch, optimizer: &mut Optimizer) -> Result<(f64, f64), TrainingError> {
+        // Forward pass with context
+        let context = self.context_analyzer.analyze_batch(batch).await?;
+        let domain_info = self.domain_adapter.adapt_to_domain(&context).await?;
+        
+        // Compute embeddings with morphological information
+        let morphology = self.morphology_handler.analyze_batch(batch, &context).await?;
+        
+        // Encode with advanced features
+        let encoded = self.encoder.forward_with_context(
+            batch,
+            &context,
+            &domain_info,
+            &morphology
+        ).await?;
+
+        // Decode with optimization
+        let decoded = self.decoder.forward_with_optimization(
+            &encoded,
+            &context,
+            &domain_info,
+            &morphology,
+            self.optimization_engine.as_ref()
+        ).await?;
+
+        // Compute loss with multiple metrics
+        let loss = self.compute_advanced_loss(&decoded, batch, &context).await?;
+        
+        // Backward pass with optimization
+        optimizer.backward_step(&loss);
+        
+        // Calculate accuracy
+        let accuracy = self.calculate_accuracy(&decoded, batch).await?;
+
+        Ok((loss.double_value(&[]), accuracy))
     }
-    
-    fn compute_loss(&self, output: &Tensor, target: &Tensor) -> Result<Tensor, TranslationError> {
-        let loss = output.cross_entropy_loss(target, None, Reduction::Mean);
-        Ok(loss)
+
+    async fn compute_advanced_loss(
+        &self,
+        output: &Tensor,
+        batch: &TranslationBatch,
+        context: &Context
+    ) -> Result<Tensor, TrainingError> {
+        // שילוב מספר מדדי שגיאה
+        let cross_entropy = output.cross_entropy_loss(batch.target(), None, Reduction::Mean);
+        let bleu_loss = self.calculate_bleu_loss(output, batch.target())?;
+        let semantic_loss = self.calculate_semantic_loss(output, batch.target(), context)?;
+        
+        // שקלול משוקלל של השגיאות
+        let total_loss = cross_entropy * 0.4 + bleu_loss * 0.3 + semantic_loss * 0.3;
+        
+        Ok(total_loss)
     }
-    
-    fn update_weights(&self, optimizer: &nn::Optimizer) -> Result<(), TranslationError> {
-        optimizer.step();
-        optimizer.zero_grad();
-        Ok(())
-    }
+}
+
+// מבני נתונים תומכים
+#[derive(Debug)]
+pub struct TranslationInput {
+    pub text: String,
+    pub source_language: String,
+    pub target_language: String,
+    pub domain: Option<String>,
+    pub context: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct TranslationOutput {
+    pub translated_text: String,
+    pub confidence_score: f64,
+    pub alternative_translations: Vec<AlternativeTranslation>,
+    pub context_matches: Vec<ContextMatch>,
+    pub performance_metrics: PerformanceMetrics,
+}
+
+#[derive(Debug)]
+pub struct AlternativeTranslation {
+    pub text: String,
+    pub confidence: f64,
+    pub context: String,
+}
+
+#[derive(Debug)]
+pub struct ContextMatch {
+    pub domain: String,
+    pub relevance_score: f64,
+    pub supporting_terms: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct PerformanceMetrics {
+    pub translation_time_ms: u64,
+    pub model_confidence: f64,
+    pub context_quality: f64,
+    pub morphology_accuracy: f64,
 } 

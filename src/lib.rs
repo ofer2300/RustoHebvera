@@ -1,36 +1,26 @@
 pub mod morphology;
+pub mod neural;
 pub mod translation_engine;
 pub mod quality_control;
 pub mod gui;
-pub mod neural;
+pub mod learning_manager;
 pub mod technical_terms;
+pub mod vocabulary;
+pub mod translation_models;
 
 pub use morphology::{
-    HebrewMorphology,
-    RussianMorphology,
-    EnhancedHebrewMorphology,
-    EnhancedRussianMorphology,
-    HebrewPattern,
-    HebrewBinyan,
-    Gender,
-    Number,
-    Case,
-    Tense,
-    Person,
-    MorphologyError,
-    SemanticInfo,
-    RootAnalysis,
+    HebrewAnalyzer, RussianAnalyzer,
+    MorphologyCache, MorphologyError,
+    Gender, Number,
 };
 
-pub use morphology::hebrew::HebrewAnalyzer;
-pub use morphology::russian::RussianAnalyzer;
-pub use morphology::cache::MorphologyCache;
-pub use morphology::patterns::PatternManager;
-pub use morphology::semantic::SemanticAnalyzer;
-pub use morphology::statistics::StatisticsAnalyzer;
+pub use neural::{
+    NeuralTranslator,
+    attention::{MultiHeadAttention, AttentionConfig},
+};
 
 pub use translation_engine::TranslationEngine;
-pub use quality_control::QualityControl;
-pub use gui::ModernGui;
-pub use neural::NeuralTranslator;
-pub use technical_terms::TechnicalTermsManager; 
+pub use quality_control::{QualityControl, IssueSeverity};
+pub use learning_manager::{LearningManager, LearningEvent, LearningEventType, UserFeedback};
+pub use technical_terms::TechnicalTermsManager;
+pub use vocabulary::{Vocabulary, VocabularyError}; 

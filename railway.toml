@@ -1,0 +1,28 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "deployment/Dockerfile"
+
+[deploy]
+startCommand = "rustohebru"
+restartPolicyType = "on_failure"
+healthcheckPath = "/health"
+healthcheckTimeout = 10
+numReplicas = 3
+
+[env]
+RUST_LOG = "info"
+
+[[services]]
+name = "db"
+type = "postgres"
+plan = "free"
+
+[[services]]
+name = "redis"
+type = "redis"
+plan = "free"
+
+[[services]]
+name = "monitoring"
+type = "grafana"
+plan = "free" 

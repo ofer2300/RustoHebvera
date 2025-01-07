@@ -1,81 +1,26 @@
-name: Deploy
+name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [ "V4" ]
-  pull_request:
-    branches: [ "V4" ]
-
-env:
-  CARGO_TERM_COLOR: always
-  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    branches: [ main ]
 
 jobs:
-  test:
-    name: Test
+  deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      
-      - name: Install Rust
+      - uses: actions/checkout@v2
+
+      - name: Setup Rust
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: stable
-          
-      - name: Run tests
-        run: cargo test --verbose
-        
-  build:
-    name: Build
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          
+
       - name: Build
         run: cargo build --release
-        
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
+
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v3
         with:
-          name: rusto-hebru
-          path: target/release/rusto-hebru-server
-          
-  deploy:
-    name: Deploy
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Install Vercel CLI
-        run: npm install --global vercel@latest
-        
-      - name: Pull Vercel Environment Information
-        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
-        
-      - name: Build Project Artifacts
-        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
-        
-      - name: Deploy Project Artifacts to Vercel
-        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
-        
-      - name: Deploy to Docker Hub
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          push: true
-          tags: |
-            ofer2300/rusto-hebru:latest
-            ofer2300/rusto-hebru:${{ github.sha }}
-        env:
-          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }} 
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./target/release 

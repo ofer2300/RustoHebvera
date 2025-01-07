@@ -2,9 +2,11 @@ use tch::{nn, Tensor, Kind};
 use crate::translation_models::TranslationError;
 use std::f64;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::collections::LruCache;
 
 /// מנגנון תשומת לב משופר עם תמיכה במספר ראשים
-pub struct MultiHeadAttention {
+pub struct EnhancedMultiHeadAttention {
     num_heads: i64,
     head_dim: i64,
     dropout: f64,
@@ -16,13 +18,15 @@ pub struct MultiHeadAttention {
     attention_dropout: Arc<nn::Dropout>,
     sparse_attention: bool,
     hierarchical: bool,
+    domain_specific: bool,
+    morphology_aware: bool,
+    context_cache: Arc<Mutex<LruCache<String, AttentionContext>>>,
 }
 
-impl MultiHeadAttention {
+impl EnhancedMultiHeadAttention {
     pub fn new(config: &AttentionConfig) -> Self {
         let head_dim = config.hidden_size / config.num_heads;
         let scale = 1.0 / f64::sqrt(head_dim as f64);
-        
         let vs = nn::VarStore::new(Device::cuda_if_available());
         
         Self {
@@ -37,123 +41,205 @@ impl MultiHeadAttention {
             attention_dropout: Arc::new(nn::Dropout::new(config.attention_dropout)),
             sparse_attention: config.sparse_attention,
             hierarchical: config.hierarchical,
+            domain_specific: config.domain_specific,
+            morphology_aware: config.morphology_aware,
+            context_cache: Arc::new(Mutex::new(LruCache::new(1000))),
         }
     }
-    
-    pub fn forward(&self, query: &Tensor, key: &Tensor, value: &Tensor, mask: Option<&Tensor>) -> Result<Tensor, AttentionError> {
+
+    pub async fn forward_enhanced(
+        &self,
+        query: &Tensor,
+        key: &Tensor,
+        value: &Tensor,
+        mask: Option<&Tensor>,
+        context: &AttentionContext,
+    ) -> Result<(Tensor, AttentionMetrics), AttentionError> {
         let batch_size = query.size()[0];
         let seq_length = query.size()[1];
         
-        // העברה לינארית
-        let query = self.query_net.forward(query);
-        let key = self.key_net.forward(key);
-        let value = self.value_net.forward(value);
-        
-        // חלוקה לראשים
-        let query = self.split_heads(&query);
-        let key = self.split_heads(&key);
-        let value = self.split_heads(&value);
-        
-        // חישוב ציוני תשומת לב
+        // התאמה להקשר ותחום
+        let (query_adapted, key_adapted, value_adapted) = self.adapt_inputs(
+            query,
+            key,
+            value,
+            context
+        ).await?;
+
+        // העברה לינארית עם התאמה מורפולוגית
+        let query = self.query_net.forward_with_morphology(&query_adapted, &context.morphology)?;
+        let key = self.key_net.forward_with_morphology(&key_adapted, &context.morphology)?;
+        let value = self.value_net.forward_with_morphology(&value_adapted, &context.morphology)?;
+
+        // חלוקה לראשים עם התאמה להקשר
+        let query = self.split_heads_with_context(&query, context);
+        let key = self.split_heads_with_context(&key, context);
+        let value = self.split_heads_with_context(&value, context);
+
+        // חישוב ציוני תשומת לב מותאמים
         let attention_scores = if self.sparse_attention {
-            self.compute_sparse_attention(&query, &key)
+            self.compute_sparse_attention(&query, &key, context).await?
         } else {
-            query.matmul(&key.transpose(-2, -1)) * self.scale
+            self.compute_dense_attention(&query, &key, context).await?
         };
-        
-        // החלת מסכה והיררכיה
+
+        // החלת מסכות והיררכיה
         let attention_probs = if self.hierarchical {
-            self.apply_hierarchical_mask(attention_scores, mask)
+            self.apply_hierarchical_attention(attention_scores, mask, context).await?
         } else {
-            self.apply_mask(attention_scores, mask)
-        }?;
-        
-        // דרופאאוט
-        let attention_probs = self.attention_dropout.forward(&attention_probs, true);
-        
-        // חישוב הקשר
-        let context = attention_probs.matmul(&value);
-        
-        // איחוד ראשים
-        let output = self.combine_heads(&context);
-        
-        // העברה לינארית סופית
-        let output = self.output_net.forward(&output);
-        
-        Ok(output)
+            self.apply_standard_attention(attention_scores, mask, context).await?
+        };
+
+        // דרופאאוט מותאם הקשר
+        let attention_probs = self.attention_dropout.forward_with_context(&attention_probs, context);
+
+        // חישוב הקשר עם אופטימיזציה
+        let context_tensor = self.compute_context_tensor(&attention_probs, &value, context).await?;
+
+        // איחוד ראשים עם התאמה להקשר
+        let output = self.combine_heads_with_context(&context_tensor, context);
+
+        // העברה לינארית סופית עם אופטימיזציה
+        let output = self.output_net.forward_with_optimization(&output, context)?;
+
+        // חישוב מטריקות
+        let metrics = self.calculate_attention_metrics(
+            &attention_probs,
+            &context_tensor,
+            context
+        ).await?;
+
+        Ok((output, metrics))
     }
-    
-    fn compute_sparse_attention(&self, query: &Tensor, key: &Tensor) -> Tensor {
-        // מימוש תשומת לב דלילה
-        let local_attn = self.compute_local_attention(query, key);
-        let global_attn = self.compute_global_attention(query, key);
-        
-        local_attn + global_attn
+
+    async fn adapt_inputs(
+        &self,
+        query: &Tensor,
+        key: &Tensor,
+        value: &Tensor,
+        context: &AttentionContext,
+    ) -> Result<(Tensor, Tensor, Tensor), AttentionError> {
+        // התאמה לתחום ספציפי
+        let (query, key, value) = if self.domain_specific {
+            self.apply_domain_adaptation(query, key, value, &context.domain).await?
+        } else {
+            (query.shallow_clone(), key.shallow_clone(), value.shallow_clone())
+        };
+
+        // התאמה מורפולוגית
+        let (query, key, value) = if self.morphology_aware {
+            self.apply_morphology_adaptation(
+                &query,
+                &key,
+                &value,
+                &context.morphology
+            ).await?
+        } else {
+            (query, key, value)
+        };
+
+        Ok((query, key, value))
     }
-    
-    fn compute_local_attention(&self, query: &Tensor, key: &Tensor) -> Tensor {
-        // חישוב תשומת לב מקומית עם חלון
-        let window_size = 128;
-        let seq_length = query.size()[2];
+
+    async fn compute_sparse_attention(
+        &self,
+        query: &Tensor,
+        key: &Tensor,
+        context: &AttentionContext,
+    ) -> Result<Tensor, AttentionError> {
+        // חישוב תשומת לב מקומית
+        let local_attn = self.compute_local_attention(query, key, context).await?;
         
-        let mut local_attn = Tensor::zeros_like(query);
+        // חישוב תשומת לב גלובלית
+        let global_attn = self.compute_global_attention(query, key, context).await?;
         
-        for i in 0..seq_length {
-            let start = i.saturating_sub(window_size / 2);
-            let end = (i + window_size / 2).min(seq_length);
-            
-            let q = query.slice(2, i, i + 1, 1);
-            let k = key.slice(2, start, end, 1);
-            
-            let score = q.matmul(&k.transpose(-2, -1)) * self.scale;
-            local_attn.slice_assign(2, i, i + 1, 1, &score);
+        // שילוב דינמי על פי הקשר
+        let combination_weights = self.calculate_attention_weights(context).await?;
+        
+        Ok(local_attn * combination_weights.local + global_attn * combination_weights.global)
+    }
+
+    async fn compute_context_tensor(
+        &self,
+        attention_probs: &Tensor,
+        value: &Tensor,
+        context: &AttentionContext,
+    ) -> Result<Tensor, AttentionError> {
+        // בדיקת קאש
+        let cache_key = self.generate_cache_key(attention_probs, value, context);
+        let mut cache = self.context_cache.lock().await;
+        
+        if let Some(cached) = cache.get(&cache_key) {
+            return Ok(cached.tensor.shallow_clone());
         }
+
+        // חישוב טנזור הקשר
+        let context_tensor = attention_probs.matmul(value);
         
-        local_attn
+        // אופטימיזציה על פי הקשר
+        let optimized = self.optimize_context_tensor(&context_tensor, context).await?;
+        
+        // שמירה בקאש
+        cache.put(cache_key, AttentionContext {
+            tensor: optimized.shallow_clone(),
+            timestamp: std::time::SystemTime::now(),
+        });
+
+        Ok(optimized)
     }
-    
-    fn compute_global_attention(&self, query: &Tensor, key: &Tensor) -> Tensor {
-        // חישוב תשומת לב גלובלית לטוקנים חשובים
-        let importance = self.compute_token_importance(query);
-        let top_k = importance.topk(self.num_heads, -1, true, true);
-        
-        let global_tokens = key.gather(-2, &top_k.indices, false);
-        query.matmul(&global_tokens.transpose(-2, -1)) * self.scale
+
+    async fn calculate_attention_metrics(
+        &self,
+        attention_probs: &Tensor,
+        context_tensor: &Tensor,
+        attention_context: &AttentionContext,
+    ) -> Result<AttentionMetrics, AttentionError> {
+        Ok(AttentionMetrics {
+            attention_entropy: self.calculate_attention_entropy(attention_probs)?,
+            context_coverage: self.calculate_context_coverage(context_tensor)?,
+            domain_relevance: self.calculate_domain_relevance(attention_context)?,
+            morphology_accuracy: self.calculate_morphology_accuracy(attention_context)?,
+        })
     }
-    
-    fn apply_hierarchical_mask(&self, scores: Tensor, mask: Option<&Tensor>) -> Result<Tensor, AttentionError> {
-        // מימוש מסכה היררכית
-        let mut masked = scores;
-        
-        if let Some(mask) = mask {
-            // מסכה ברמה הראשונה - בלוקים
-            let block_mask = self.create_block_mask(mask);
-            masked = masked * block_mask;
-            
-            // מסכה ברמה השנייה - תוך-בלוקית
-            let local_mask = self.create_local_mask(mask);
-            masked = masked * local_mask;
-        }
-        
-        Ok(masked.softmax(-1, Kind::Float))
-    }
-    
-    fn split_heads(&self, x: &Tensor) -> Tensor {
-        let batch_size = x.size()[0];
-        let seq_length = x.size()[1];
-        
-        x.view([batch_size, seq_length, self.num_heads, self.head_dim])
-         .transpose(1, 2)
-    }
-    
-    fn combine_heads(&self, x: &Tensor) -> Tensor {
-        let batch_size = x.size()[0];
-        let seq_length = x.size()[2];
-        
-        x.transpose(1, 2)
-         .contiguous()
-         .view([batch_size, seq_length, self.num_heads * self.head_dim])
-    }
+}
+
+#[derive(Debug)]
+pub struct AttentionMetrics {
+    pub attention_entropy: f64,
+    pub context_coverage: f64,
+    pub domain_relevance: f64,
+    pub morphology_accuracy: f64,
+}
+
+#[derive(Debug)]
+pub struct AttentionContext {
+    pub domain: DomainInfo,
+    pub morphology: MorphologyInfo,
+    pub tensor: Tensor,
+    pub timestamp: std::time::SystemTime,
+}
+
+#[derive(Debug)]
+pub struct DomainInfo {
+    pub name: String,
+    pub confidence: f64,
+    pub keywords: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct MorphologyInfo {
+    pub language: String,
+    pub features: Vec<MorphologyFeature>,
+    pub confidence: f64,
+}
+
+#[derive(Debug)]
+pub enum MorphologyFeature {
+    Gender(Gender),
+    Number(Number),
+    Case(Case),
+    Tense(Tense),
+    Person(Person),
 }
 
 pub struct SelfAttention {

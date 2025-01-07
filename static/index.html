@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RustoHebru - תרגום הנדסי רוסית-עברית</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+        }
+        .input-area {
+            margin: 20px 0;
+        }
+        textarea {
+            width: 100%;
+            height: 150px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            resize: vertical;
+        }
+        button {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 100%;
+        }
+        button:hover {
+            background: #2980b9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>RustoHebru</h1>
+        <h2>תרגום הנדסי מרוסית לעברית</h2>
+        
+        <div class="input-area">
+            <textarea placeholder="הכנס טקסט ברוסית לתרגום..."></textarea>
+        </div>
+        
+        <button onclick="translate()">תרגם</button>
+        
+        <div class="input-area">
+            <textarea placeholder="התרגום יופיע כאן..." readonly></textarea>
+        </div>
+    </div>
+
+    <script>
+        async function translate() {
+            const input = document.querySelector('textarea');
+            const output = document.querySelectorAll('textarea')[1];
+            
+            try {
+                const response = await fetch('/api/translate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ text: input.value }),
+                });
+                
+                const data = await response.json();
+                output.value = data.translation;
+            } catch (error) {
+                output.value = 'אירעה שגיאה בתרגום. אנא נסה שוב.';
+            }
+        }
+    </script>
+</body>
+</html> 

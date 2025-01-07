@@ -50,11 +50,15 @@ pub enum CorrectionType {
     Other,
 }
 
-pub struct LearningManager {
+pub struct AdvancedLearningManager {
     events: Arc<Mutex<Vec<LearningEvent>>>,
     hebrew_patterns: Arc<Mutex<HebrewPatternLearner>>,
     russian_patterns: Arc<Mutex<RussianPatternLearner>>,
     feedback_analyzer: Arc<Mutex<FeedbackAnalyzer>>,
+    domain_adapter: Arc<Mutex<DomainAdapter>>,
+    continuous_learner: Arc<Mutex<ContinuousLearner>>,
+    performance_monitor: Arc<Mutex<PerformanceMonitor>>,
+    optimization_engine: Arc<Mutex<OptimizationEngine>>,
 }
 
 #[derive(Debug, Default)]
@@ -79,87 +83,128 @@ struct FeedbackAnalyzer {
     common_issues: Vec<(String, usize)>,
 }
 
-impl LearningManager {
+impl AdvancedLearningManager {
     pub fn new() -> Self {
         Self {
             events: Arc::new(Mutex::new(Vec::new())),
             hebrew_patterns: Arc::new(Mutex::new(HebrewPatternLearner::default())),
             russian_patterns: Arc::new(Mutex::new(RussianPatternLearner::default())),
             feedback_analyzer: Arc::new(Mutex::new(FeedbackAnalyzer::default())),
+            domain_adapter: Arc::new(Mutex::new(DomainAdapter::new())),
+            continuous_learner: Arc::new(Mutex::new(ContinuousLearner::new())),
+            performance_monitor: Arc::new(Mutex::new(PerformanceMonitor::new())),
+            optimization_engine: Arc::new(Mutex::new(OptimizationEngine::new())),
         }
     }
 
-    pub async fn record_event(&self, event: LearningEvent) -> Result<()> {
+    pub async fn record_event(&self, event: LearningEvent) -> Result<EventMetrics> {
+        // מדידת ביצועים
+        let _perf = self.performance_monitor.lock().await.start_operation("record_event");
+        
         // תיעוד האירוע
         let mut events = self.events.lock().await;
         events.push(event.clone());
         
-        // ניתוח האירוע ועדכון הלומדים
-        match event.event_type {
+        // ניתוח האירוע
+        let metrics = match event.event_type {
             LearningEventType::Translation => {
-                self.analyze_translation(&event).await?;
+                self.analyze_translation(&event).await?
             }
             LearningEventType::Correction => {
-                self.analyze_correction(&event).await?;
+                self.analyze_correction(&event).await?
             }
             LearningEventType::Feedback => {
-                self.analyze_feedback(&event).await?;
+                self.analyze_feedback(&event).await?
             }
             LearningEventType::ValidationFailure => {
-                self.analyze_failure(&event).await?;
+                self.analyze_failure(&event).await?
             }
             LearningEventType::Success => {
-                self.analyze_success(&event).await?;
+                self.analyze_success(&event).await?
             }
-        }
+        };
+
+        // אופטימיזציה מתמשכת
+        self.optimization_engine.lock().await.optimize(&metrics).await?;
         
-        Ok(())
+        Ok(metrics)
     }
 
-    async fn analyze_translation(&self, event: &LearningEvent) -> Result<()> {
-        // ניתוח דפוסים בתרגום
+    async fn analyze_translation(&self, event: &LearningEvent) -> Result<EventMetrics> {
+        let mut metrics = EventMetrics::new();
+        
         if let Some(report) = &event.validation_report {
             // ניתוח דפוסים מורפולוגיים
             let mut hebrew_patterns = self.hebrew_patterns.lock().await;
-            hebrew_patterns.analyze_morphology(&event.source_text, &event.target_text)?;
+            let hebrew_metrics = hebrew_patterns.analyze_morphology_enhanced(
+                &event.source_text,
+                &event.target_text,
+                report
+            ).await?;
+            metrics.merge(hebrew_metrics);
             
             let mut russian_patterns = self.russian_patterns.lock().await;
-            russian_patterns.analyze_morphology(&event.source_text, &event.target_text)?;
+            let russian_metrics = russian_patterns.analyze_morphology_enhanced(
+                &event.source_text,
+                &event.target_text,
+                report
+            ).await?;
+            metrics.merge(russian_metrics);
             
             // ניתוח דפוסי סגנון
-            hebrew_patterns.analyze_style(&event.source_text)?;
-            russian_patterns.analyze_style(&event.target_text)?;
+            let style_metrics = self.analyze_style_patterns(
+                &event.source_text,
+                &event.target_text,
+                report
+            ).await?;
+            metrics.merge(style_metrics);
+            
+            // למידה מתמשכת
+            let mut learner = self.continuous_learner.lock().await;
+            learner.learn_from_translation(event, &metrics).await?;
         }
         
-        Ok(())
+        Ok(metrics)
     }
 
-    async fn analyze_correction(&self, event: &LearningEvent) -> Result<()> {
+    async fn analyze_correction(&self, event: &LearningEvent) -> Result<EventMetrics> {
+        let mut metrics = EventMetrics::new();
+        
         if let Some(feedback) = &event.user_feedback {
             if let Some(corrections) = &feedback.corrections {
                 for correction in corrections {
                     match correction.correction_type {
                         CorrectionType::Grammar => {
-                            // עדכון דפוסי טעויות דקדוקיות
-                            let mut hebrew_patterns = self.hebrew_patterns.lock().await;
-                            hebrew_patterns.update_common_mistakes(
-                                &correction.original_text,
-                                &correction.corrected_text,
-                            );
-                            
-                            let mut russian_patterns = self.russian_patterns.lock().await;
-                            russian_patterns.update_common_mistakes(
-                                &correction.original_text,
-                                &correction.corrected_text,
-                            );
+                            let grammar_metrics = self.analyze_grammar_correction(
+                                correction,
+                                &event.source_text,
+                                &event.target_text
+                            ).await?;
+                            metrics.merge(grammar_metrics);
                         }
                         CorrectionType::Style => {
-                            // עדכון דפוסי סגנון
-                            let mut hebrew_patterns = self.hebrew_patterns.lock().await;
-                            hebrew_patterns.update_style_patterns(&correction.corrected_text);
-                            
-                            let mut russian_patterns = self.russian_patterns.lock().await;
-                            russian_patterns.update_style_patterns(&correction.corrected_text);
+                            let style_metrics = self.analyze_style_correction(
+                                correction,
+                                &event.source_text,
+                                &event.target_text
+                            ).await?;
+                            metrics.merge(style_metrics);
+                        }
+                        CorrectionType::Terminology => {
+                            let term_metrics = self.analyze_terminology_correction(
+                                correction,
+                                &event.source_text,
+                                &event.target_text
+                            ).await?;
+                            metrics.merge(term_metrics);
+                        }
+                        CorrectionType::Cultural => {
+                            let cultural_metrics = self.analyze_cultural_correction(
+                                correction,
+                                &event.source_text,
+                                &event.target_text
+                            ).await?;
+                            metrics.merge(cultural_metrics);
                         }
                         _ => {}
                     }
@@ -167,97 +212,56 @@ impl LearningManager {
             }
         }
         
-        Ok(())
+        Ok(metrics)
     }
 
-    async fn analyze_feedback(&self, event: &LearningEvent) -> Result<()> {
+    async fn analyze_feedback(&self, event: &LearningEvent) -> Result<EventMetrics> {
+        let mut metrics = EventMetrics::new();
+        
         if let Some(feedback) = &event.user_feedback {
             let mut analyzer = self.feedback_analyzer.lock().await;
             
-            // עדכון סטטיסטיקות משוב
-            analyzer.total_feedback += 1;
-            if feedback.rating >= 4 {
-                analyzer.positive_feedback += 1;
-            } else if feedback.rating <= 2 {
-                analyzer.negative_feedback += 1;
-            }
+            // עיתוח מתקדם של משוב
+            let feedback_metrics = analyzer.analyze_feedback_enhanced(
+                feedback,
+                &event.source_text,
+                &event.target_text
+            ).await?;
+            metrics.merge(feedback_metrics);
             
-            // ניתוח הערות
-            if let Some(comments) = &feedback.comments {
-                analyzer.analyze_comments(comments);
-            }
+            // התאמת דומיין
+            let mut domain_adapter = self.domain_adapter.lock().await;
+            let domain_metrics = domain_adapter.adapt_from_feedback(
+                feedback,
+                &event.source_text,
+                &event.target_text
+            ).await?;
+            metrics.merge(domain_metrics);
+            
+            // למידה מתמשכת
+            let mut learner = self.continuous_learner.lock().await;
+            learner.learn_from_feedback(feedback, &metrics).await?;
         }
         
-        Ok(())
+        Ok(metrics)
     }
 
-    async fn analyze_failure(&self, event: &LearningEvent) -> Result<()> {
-        if let Some(report) = &event.validation_report {
-            // ניתוח כשלים ועדכון דפוסים
-            let mut hebrew_patterns = self.hebrew_patterns.lock().await;
-            hebrew_patterns.analyze_failures(report);
-            
-            let mut russian_patterns = self.russian_patterns.lock().await;
-            russian_patterns.analyze_failures(report);
-        }
-        
-        Ok(())
-    }
-
-    async fn analyze_success(&self, event: &LearningEvent) -> Result<()> {
-        if let Some(report) = &event.validation_report {
-            // ניתוח הצלחות ועדכון דפוסים
-            let mut hebrew_patterns = self.hebrew_patterns.lock().await;
-            hebrew_patterns.analyze_successes(report);
-            
-            let mut russian_patterns = self.russian_patterns.lock().await;
-            russian_patterns.analyze_successes(report);
-        }
-        
-        Ok(())
-    }
-
-    pub async fn get_learning_statistics(&self) -> Result<LearningStatistics> {
+    pub async fn get_learning_statistics(&self) -> Result<EnhancedLearningStatistics> {
         let events = self.events.lock().await;
         let analyzer = self.feedback_analyzer.lock().await;
+        let monitor = self.performance_monitor.lock().await;
+        let optimization = self.optimization_engine.lock().await;
         
-        Ok(LearningStatistics {
+        Ok(EnhancedLearningStatistics {
             total_events: events.len(),
             success_rate: self.calculate_success_rate(&events),
             average_confidence: self.calculate_average_confidence(&events),
             positive_feedback_rate: self.calculate_feedback_rate(&analyzer),
-            common_issues: analyzer.common_issues.clone(),
+            performance_metrics: monitor.get_metrics().await?,
+            optimization_metrics: optimization.get_metrics().await?,
+            domain_coverage: self.calculate_domain_coverage().await?,
+            learning_progress: self.calculate_learning_progress().await?,
         })
-    }
-
-    fn calculate_success_rate(&self, events: &[LearningEvent]) -> f64 {
-        let successes = events.iter()
-            .filter(|e| matches!(e.event_type, LearningEventType::Success))
-            .count();
-        
-        if events.is_empty() {
-            0.0
-        } else {
-            successes as f64 / events.len() as f64
-        }
-    }
-
-    fn calculate_average_confidence(&self, events: &[LearningEvent]) -> f64 {
-        if events.is_empty() {
-            0.0
-        } else {
-            events.iter()
-                .map(|e| e.confidence_score)
-                .sum::<f64>() / events.len() as f64
-        }
-    }
-
-    fn calculate_feedback_rate(&self, analyzer: &FeedbackAnalyzer) -> f64 {
-        if analyzer.total_feedback == 0 {
-            0.0
-        } else {
-            analyzer.positive_feedback as f64 / analyzer.total_feedback as f64
-        }
     }
 }
 
@@ -364,12 +368,79 @@ impl FeedbackAnalyzer {
 }
 
 #[derive(Debug, Clone)]
-pub struct LearningStatistics {
+pub struct EventMetrics {
+    pub grammar_score: f64,
+    pub style_score: f64,
+    pub terminology_score: f64,
+    pub cultural_score: f64,
+    pub performance_metrics: PerformanceMetrics,
+    pub optimization_metrics: OptimizationMetrics,
+}
+
+impl EventMetrics {
+    pub fn new() -> Self {
+        Self {
+            grammar_score: 0.0,
+            style_score: 0.0,
+            terminology_score: 0.0,
+            cultural_score: 0.0,
+            performance_metrics: PerformanceMetrics::default(),
+            optimization_metrics: OptimizationMetrics::default(),
+        }
+    }
+
+    pub fn merge(&mut self, other: EventMetrics) {
+        self.grammar_score = (self.grammar_score + other.grammar_score) / 2.0;
+        self.style_score = (self.style_score + other.style_score) / 2.0;
+        self.terminology_score = (self.terminology_score + other.terminology_score) / 2.0;
+        self.cultural_score = (self.cultural_score + other.cultural_score) / 2.0;
+        self.performance_metrics.merge(&other.performance_metrics);
+        self.optimization_metrics.merge(&other.optimization_metrics);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EnhancedLearningStatistics {
     pub total_events: usize,
     pub success_rate: f64,
     pub average_confidence: f64,
     pub positive_feedback_rate: f64,
-    pub common_issues: Vec<(String, usize)>,
+    pub performance_metrics: PerformanceMetrics,
+    pub optimization_metrics: OptimizationMetrics,
+    pub domain_coverage: DomainCoverage,
+    pub learning_progress: LearningProgress,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PerformanceMetrics {
+    pub average_translation_time_ms: u64,
+    pub peak_memory_usage_mb: u64,
+    pub cache_hit_rate: f64,
+    pub throughput_per_second: f64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct OptimizationMetrics {
+    pub current_learning_rate: f64,
+    pub parameter_updates: u64,
+    pub gradient_norm: f64,
+    pub optimization_steps: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct DomainCoverage {
+    pub total_domains: usize,
+    pub active_domains: usize,
+    pub coverage_percentage: f64,
+    pub domain_specific_accuracy: HashMap<String, f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LearningProgress {
+    pub initial_performance: f64,
+    pub current_performance: f64,
+    pub improvement_rate: f64,
+    pub learning_curve: Vec<(DateTime<Utc>, f64)>,
 }
 
 #[cfg(test)]
@@ -378,7 +449,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_record_event() {
-        let manager = LearningManager::new();
+        let manager = AdvancedLearningManager::new();
         let event = LearningEvent {
             timestamp: Utc::now(),
             event_type: LearningEventType::Translation,
@@ -397,7 +468,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_feedback_analysis() {
-        let manager = LearningManager::new();
+        let manager = AdvancedLearningManager::new();
         let event = LearningEvent {
             timestamp: Utc::now(),
             event_type: LearningEventType::Feedback,

@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: rustohebru
+    env: docker
+    dockerfilePath: ./deployment/Dockerfile
+    numInstances: 3
+    healthCheckPath: /health
+    envVars:
+      - key: RUST_LOG
+        value: info
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rustohebru-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: rustohebru-redis
+          type: redis
+          property: connectionString
+
+  - type: redis
+    name: rustohebru-redis
+    ipAllowList: []
+    plan: free
+
+databases:
+  - name: rustohebru-db
+    databaseName: rustohebru
+    user: rustohebru
+    plan: free 
