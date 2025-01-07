@@ -5,6 +5,8 @@ pub use domain::DomainModel;
 pub use style::StyleModel;
 
 use chrono::{DateTime, Utc};
+use thiserror::Error;
+use std::collections::HashMap;
 
 /// הקשר תרגום
 #[derive(Debug, Clone)]
@@ -15,6 +17,7 @@ pub struct TranslationContext {
     pub style: Style,
     /// רמת פורמליות
     pub formality: Formality,
+    pub metadata: HashMap<String, String>,
 }
 
 /// תחומי תרגום
@@ -26,6 +29,8 @@ pub enum Domain {
     Legal,
     /// כללי
     General,
+    Medical,
+    Custom(String),
 }
 
 /// סגנונות תרגום
@@ -37,6 +42,9 @@ pub enum Style {
     Professional,
     /// יומיומי
     Casual,
+    Informal,
+    Technical,
+    Custom(String),
 }
 
 /// רמות פורמליות
@@ -48,6 +56,7 @@ pub enum Formality {
     Medium,
     /// נמוכה
     Low,
+    Custom(String),
 }
 
 /// מונח טכני
@@ -65,6 +74,7 @@ pub struct TechnicalTerm {
     pub notes: Option<String>,
     /// תאריך עדכון
     pub updated_at: DateTime<Utc>,
+    pub metadata: HashMap<String, String>,
 }
 
 /// רשומת תרגום
@@ -80,57 +90,69 @@ pub struct TranslationRecord {
 }
 
 /// שגיאות תרגום
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum TranslationError {
-    InvalidInput(String),
-    NetworkError(String),
-    DatabaseError(String),
-    QualityCheckFailed(String),
+    #[error("שגיאת מודל: {0}")]
+    ModelError(String),
+    
+    #[error("שגיאת אוצר מילים: {0}")]
+    VocabularyError(String),
+    
+    #[error("שגיאת הקשר: {0}")]
+    ContextError(String),
+    
+    #[error("שגיאת מונח טכני: {0}")]
+    TechnicalTermError(String),
+    
+    #[error("שגיאת למידה: {0}")]
+    LearningError(String),
+    
+    #[error("שגיאה כללית: {0}")]
+    GeneralError(String),
 }
 
 #[derive(Debug)]
 pub struct QualityResult {
-    pub check_name: String,
-    pub passed: bool,
-    pub message: String,
+    pub score: f64,
+    pub issues: Vec<String>,
+    pub suggestions: Vec<String>,
 }
 
 #[derive(Debug)]
 pub struct TranslationCache {
-    pub entries: std::collections::HashMap<String, String>,
+    pub source: String,
+    pub target: String,
+    pub context: TranslationContext,
+    pub quality_score: f64,
 }
 
 impl TranslationCache {
     pub fn new() -> Self {
         Self {
-            entries: std::collections::HashMap::new(),
+            source: String::new(),
+            target: String::new(),
+            context: TranslationContext {
+                domain: Domain::Technical,
+                style: Style::Formal,
+                formality: Formality::High,
+                metadata: HashMap::new(),
+            },
+            quality_score: 0.0,
         }
     }
 }
 
-#[derive(Debug)]
-pub struct ContextAnalyzer;
-
-impl ContextAnalyzer {
-    pub fn new() -> Self {
-        Self
-    }
+pub trait ContextAnalyzer {
+    fn analyze_context(&self, text: &str) -> Result<TranslationContext, TranslationError>;
+    fn validate_context(&self, context: &TranslationContext) -> Result<bool, TranslationError>;
 }
 
-#[derive(Debug)]
-pub struct TermAnalyzer;
-
-impl TermAnalyzer {
-    pub fn new() -> Self {
-        Self
-    }
+pub trait TermAnalyzer {
+    fn extract_terms(&self, text: &str) -> Result<Vec<TechnicalTerm>, TranslationError>;
+    fn validate_term(&self, term: &TechnicalTerm) -> Result<bool, TranslationError>;
 }
 
-#[derive(Debug)]
-pub struct LearningModel;
-
-impl LearningModel {
-    pub fn new() -> Self {
-        Self
-    }
+pub trait LearningModel {
+    fn train(&mut self, source: &str, target: &str, context: &TranslationContext) -> Result<(), TranslationError>;
+    fn evaluate(&self, source: &str, target: &str) -> Result<f64, TranslationError>;
 } 

@@ -1,6 +1,7 @@
 pub mod translation_models;
 pub mod translation_engine;
 pub mod quality_control;
+pub mod neural;
 
 pub use translation_models::{
     TranslationContext,
@@ -22,4 +23,6 @@ pub use translation_engine::{
     ContextManager,
     TechnicalTermsManager,
     LearningManager,
-}; 
+};
+
+pub use neural::NeuralTranslator; 

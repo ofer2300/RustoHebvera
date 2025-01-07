@@ -1,315 +1,200 @@
-use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use dashmap::DashMap;
 use serde::{Serialize, Deserialize};
-use std::fs;
-use std::path::Path;
 use anyhow::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TechnicalTerm {
-    pub hebrew: String,
-    pub russian: String,
-    pub context: Option<String>,
-    pub category: Option<String>,
-    pub notes: Option<String>,
-    pub synonyms_he: Vec<String>,
-    pub synonyms_ru: Vec<String>,
+    pub source: String,
+    pub target: String,
+    pub domain: String,
+    pub context: Vec<String>,
     pub usage_examples: Vec<String>,
-    pub tags: HashSet<String>,
-    pub last_updated: chrono::DateTime<chrono::Utc>,
+    pub synonyms: Vec<String>,
+    pub metadata: TermMetadata,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchQuery {
-    pub text: String,
-    pub lang: String,
-    pub categories: Option<Vec<String>>,
-    pub contexts: Option<Vec<String>>,
-    pub tags: Option<Vec<String>>,
-    pub include_synonyms: bool,
-    pub exact_match: bool,
+pub struct TermMetadata {
+    pub confidence_score: f64,
+    pub last_updated: chrono::DateTime<chrono::Utc>,
+    pub usage_count: u64,
+    pub verified: bool,
+    pub source_references: Vec<String>,
 }
 
-#[derive(Debug)]
 pub struct TechnicalDictionary {
-    terms: HashMap<String, TechnicalTerm>,
-    file_path: String,
-    category_index: HashMap<String, HashSet<String>>,  // קטגוריה -> רשימת מונחים
-    context_index: HashMap<String, HashSet<String>>,   // הקשר -> רשימת מונחים
-    tag_index: HashMap<String, HashSet<String>>,       // תגית -> רשימת מונחים
+    terms: Arc<DashMap<String, TechnicalTerm>>,
+    index: Arc<TermIndex>,
+    learning_system: Arc<AdaptiveLearning>,
+    validation_system: Arc<TermValidation>,
+    context_analyzer: Arc<ContextAnalyzer>,
 }
 
 impl TechnicalDictionary {
-    pub fn new(file_path: String) -> Result<Self> {
-        let terms = if Path::new(&file_path).exists() {
-            let content = fs::read_to_string(&file_path)?;
-            serde_json::from_str(&content)?
-        } else {
-            HashMap::new()
-        };
+    pub fn new() -> Self {
+        Self {
+            terms: Arc::new(DashMap::new()),
+            index: Arc::new(TermIndex::new()),
+            learning_system: Arc::new(AdaptiveLearning::new()),
+            validation_system: Arc::new(TermValidation::new()),
+            context_analyzer: Arc::new(ContextAnalyzer::new()),
+        }
+    }
 
-        let mut dict = Self {
-            terms,
-            file_path,
-            category_index: HashMap::new(),
-            context_index: HashMap::new(),
-            tag_index: HashMap::new(),
-        };
+    pub async fn add_term(&self, term: TechnicalTerm) -> Result<()> {
+        // וידוא תקינות
+        self.validation_system.validate_term(&term)?;
         
-        dict.rebuild_indices();
-        Ok(dict)
-    }
-
-    fn rebuild_indices(&mut self) {
-        self.category_index.clear();
-        self.context_index.clear();
-        self.tag_index.clear();
-
-        for (term_key, term) in &self.terms {
-            if let Some(category) = &term.category {
-                self.category_index
-                    .entry(category.clone())
-                    .or_default()
-                    .insert(term_key.clone());
-            }
-            
-            if let Some(context) = &term.context {
-                self.context_index
-                    .entry(context.clone())
-                    .or_default()
-                    .insert(term_key.clone());
-            }
-            
-            for tag in &term.tags {
-                self.tag_index
-                    .entry(tag.clone())
-                    .or_default()
-                    .insert(term_key.clone());
-            }
-        }
-    }
-
-    pub fn add_term(&mut self, mut term: TechnicalTerm) -> Result<()> {
-        term.last_updated = chrono::Utc::now();
-        self.terms.insert(term.hebrew.clone(), term);
-        self.rebuild_indices();
-        self.save()
-    }
-
-    pub fn update_term(&mut self, hebrew: &str, mut updates: TechnicalTerm) -> Result<()> {
-        if let Some(term) = self.terms.get_mut(hebrew) {
-            updates.last_updated = chrono::Utc::now();
-            *term = updates;
-            self.rebuild_indices();
-            self.save()?;
-        }
+        // הוספה למילון
+        self.terms.insert(term.source.clone(), term.clone());
+        
+        // עדכון אינדקס
+        self.index.add_term(&term)?;
+        
+        // עדכון מערכת הלמידה
+        self.learning_system.process_new_term(&term).await?;
+        
         Ok(())
     }
 
-    pub fn delete_term(&mut self, hebrew: &str) -> Result<()> {
-        self.terms.remove(hebrew);
-        self.rebuild_indices();
-        self.save()
-    }
-
-    pub fn search(&self, query: &SearchQuery) -> Vec<&TechnicalTerm> {
-        let mut results: HashSet<&TechnicalTerm> = HashSet::new();
-        let search_text = query.text.to_lowercase();
-
-        // חיפוש בטקסט
-        for term in self.terms.values() {
-            let mut should_include = false;
-
-            // חיפוש בשדה העיקרי
-            let term_text = match query.lang.as_str() {
-                "he" => &term.hebrew,
-                "ru" => &term.russian,
-                _ => continue,
-            };
-
-            if query.exact_match {
-                should_include = term_text.to_lowercase() == search_text;
-            } else {
-                should_include = term_text.to_lowercase().contains(&search_text);
-            }
-
-            // חיפוש בסינונימים
-            if query.include_synonyms {
-                let synonyms = match query.lang.as_str() {
-                    "he" => &term.synonyms_he,
-                    "ru" => &term.synonyms_ru,
-                    _ => continue,
-                };
-                
-                should_include = should_include || synonyms.iter().any(|s| {
-                    if query.exact_match {
-                        s.to_lowercase() == search_text
-                    } else {
-                        s.to_lowercase().contains(&search_text)
-                    }
-                });
-            }
-
-            if should_include {
-                results.insert(term);
-            }
-        }
-
-        // סינון לפי קטגוריות
-        if let Some(categories) = &query.categories {
-            results.retain(|term| {
-                if let Some(term_category) = &term.category {
-                    categories.contains(term_category)
-                } else {
-                    false
-                }
-            });
-        }
-
-        // סינון לפי הקשרים
-        if let Some(contexts) = &query.contexts {
-            results.retain(|term| {
-                if let Some(term_context) = &term.context {
-                    contexts.contains(term_context)
-                } else {
-                    false
-                }
-            });
-        }
-
-        // סינון לפי תגיות
-        if let Some(tags) = &query.tags {
-            results.retain(|term| {
-                tags.iter().all(|tag| term.tags.contains(tag))
-            });
-        }
-
-        let mut results_vec: Vec<&TechnicalTerm> = results.into_iter().collect();
-        results_vec.sort_by(|a, b| a.hebrew.cmp(&b.hebrew));
-        results_vec
-    }
-
-    pub fn get_term(&self, hebrew: &str) -> Option<&TechnicalTerm> {
-        self.terms.get(hebrew)
-    }
-
-    pub fn get_all_terms(&self) -> impl Iterator<Item = &TechnicalTerm> {
-        self.terms.values()
-    }
-
-    pub fn get_all_categories(&self) -> Vec<String> {
-        self.category_index.keys().cloned().collect()
-    }
-
-    pub fn get_all_contexts(&self) -> Vec<String> {
-        self.context_index.keys().cloned().collect()
-    }
-
-    pub fn get_all_tags(&self) -> Vec<String> {
-        self.tag_index.keys().cloned().collect()
-    }
-
-    pub fn get_terms_by_category(&self, category: &str) -> Vec<&TechnicalTerm> {
-        self.category_index.get(category)
-            .map(|terms| {
-                terms.iter()
-                    .filter_map(|term_key| self.terms.get(term_key))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    pub fn get_terms_by_context(&self, context: &str) -> Vec<&TechnicalTerm> {
-        self.context_index.get(context)
-            .map(|terms| {
-                terms.iter()
-                    .filter_map(|term_key| self.terms.get(term_key))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    pub fn get_terms_by_tag(&self, tag: &str) -> Vec<&TechnicalTerm> {
-        self.tag_index.get(tag)
-            .map(|terms| {
-                terms.iter()
-                    .filter_map(|term_key| self.terms.get(term_key))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    pub fn translate(&self, text: &str, source_lang: &str, target_lang: &str) -> String {
-        let mut result = text.to_string();
+    pub async fn find_term(&self, query: &str, context: Option<&str>) -> Result<Vec<TechnicalTerm>> {
+        let mut results = Vec::new();
         
-        for term in self.terms.values() {
-            let (search_term, replacement) = match source_lang {
-                "he" => (&term.hebrew, &term.russian),
-                "ru" => (&term.russian, &term.hebrew),
-                _ => continue,
-            };
-            
-            result = result.replace(search_term, replacement);
-            
-            // חיפוש בסינונימים
-            let synonyms = match source_lang {
-                "he" => &term.synonyms_he,
-                "ru" => &term.synonyms_ru,
-                _ => continue,
-            };
-            
-            for synonym in synonyms {
-                result = result.replace(synonym, replacement);
-            }
+        // חיפוש מדויק
+        if let Some(term) = self.terms.get(query) {
+            results.push(term.clone());
         }
         
-        result
+        // חיפוש דומים
+        let similar_terms = self.index.find_similar(query)?;
+        results.extend(similar_terms);
+        
+        // סינון לפי הקשר
+        if let Some(context) = context {
+            results = self.filter_by_context(&results, context)?;
+        }
+        
+        // מיון לפי רלוונטיות
+        self.sort_by_relevance(&mut results, query)?;
+        
+        Ok(results)
     }
 
-    pub fn save(&self) -> Result<()> {
-        let content = serde_json::to_string_pretty(&self.terms)?;
-        fs::write(&self.file_path, content)?;
+    pub async fn update_term(&self, source: &str, updates: TermUpdates) -> Result<()> {
+        if let Some(mut term) = self.terms.get_mut(source) {
+            // עדכון השדות
+            term.value_mut().apply_updates(updates)?;
+            
+            // וידוא לאחר עדכון
+            self.validation_system.validate_term(term.value())?;
+            
+            // עדכון אינדקס
+            self.index.update_term(term.value())?;
+            
+            // עדכון מערכת הלמידה
+            self.learning_system.process_term_update(term.value()).await?;
+        }
+        
         Ok(())
     }
 
-    pub fn get_all_terms_map(&self) -> Result<HashMap<String, TechnicalTerm>> {
-        Ok(self.terms.clone())
-    }
-
-    pub fn get_all_tags_set(&self) -> Result<HashSet<String>> {
-        let mut all_tags = HashSet::new();
-        for term in self.terms.values() {
-            all_tags.extend(term.tags.clone());
+    pub async fn learn_from_usage(&self, text: &str, translation: &str) -> Result<()> {
+        // זיהוי מונחים בטקסט
+        let terms = self.identify_terms_in_text(text)?;
+        
+        // ניתוח הקשר
+        let context = self.context_analyzer.analyze(text)?;
+        
+        // עדכון סטטיסטיקות שימוש
+        for term in terms {
+            self.update_usage_statistics(&term, &context).await?;
         }
-        Ok(all_tags)
+        
+        // למידה מהתרגום
+        self.learning_system.learn_from_translation(text, translation, &terms).await?;
+        
+        Ok(())
     }
 
-    pub fn import_terms(&mut self, terms: HashMap<String, TechnicalTerm>) -> Result<()> {
-        self.terms = terms;
-        self.rebuild_indices();
-        self.save()
+    fn filter_by_context(&self, terms: &[TechnicalTerm], context: &str) -> Result<Vec<TechnicalTerm>> {
+        let context_vector = self.context_analyzer.vectorize(context)?;
+        
+        let filtered: Vec<_> = terms
+            .iter()
+            .filter(|term| {
+                let term_context = term.context.join(" ");
+                let term_vector = self.context_analyzer.vectorize(&term_context).unwrap_or_default();
+                self.context_analyzer.calculate_similarity(&context_vector, &term_vector) > 0.7
+            })
+            .cloned()
+            .collect();
+        
+        Ok(filtered)
     }
 
-    pub fn merge_with(&mut self, other: &TechnicalDictionary) -> Result<()> {
-        for (term_id, term) in &other.terms {
-            if let Some(existing_term) = self.terms.get(term_id) {
-                if existing_term.last_updated < term.last_updated {
-                    self.terms.insert(term_id.clone(), term.clone());
-                }
-            } else {
-                self.terms.insert(term_id.clone(), term.clone());
+    fn sort_by_relevance(&self, terms: &mut [TechnicalTerm], query: &str) -> Result<()> {
+        terms.sort_by(|a, b| {
+            let score_a = self.calculate_relevance_score(a, query);
+            let score_b = self.calculate_relevance_score(b, query);
+            score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        
+        Ok(())
+    }
+
+    fn calculate_relevance_score(&self, term: &TechnicalTerm, query: &str) -> f64 {
+        let mut score = 0.0;
+        
+        // התאמה טקסטואלית
+        score += self.calculate_text_similarity(&term.source, query);
+        
+        // ציון אמון
+        score += term.metadata.confidence_score;
+        
+        // תדירות שימוש
+        score += (term.metadata.usage_count as f64).log10() / 10.0;
+        
+        // אימות
+        if term.metadata.verified {
+            score += 0.3;
+        }
+        
+        score
+    }
+}
+
+pub struct TermIndex {
+    embeddings: HashMap<String, Vec<f32>>,
+    index: Arc<faiss::Index>,
+}
+
+impl TermIndex {
+    pub fn new() -> Self {
+        Self {
+            embeddings: HashMap::new(),
+            index: Arc::new(faiss::Index::new(384, "Flat")),
+        }
+    }
+
+    pub fn add_term(&self, term: &TechnicalTerm) -> Result<()> {
+        let embedding = self.compute_embedding(&term.source)?;
+        self.embeddings.insert(term.source.clone(), embedding.clone());
+        self.index.add(&embedding)?;
+        Ok(())
+    }
+
+    pub fn find_similar(&self, query: &str) -> Result<Vec<TechnicalTerm>> {
+        let query_embedding = self.compute_embedding(query)?;
+        let (distances, indices) = self.index.search(&query_embedding, 10)?;
+        
+        let mut results = Vec::new();
+        for (distance, index) in distances.iter().zip(indices.iter()) {
+            if let Some(term) = self.get_term_by_index(*index) {
+                results.push(term.clone());
             }
         }
-        self.rebuild_indices();
-        self.save()
-    }
-
-    pub fn create_snapshot(&self) -> Result<HashMap<String, TechnicalTerm>> {
-        Ok(self.terms.clone())
-    }
-
-    pub fn restore_snapshot(&mut self, snapshot: HashMap<String, TechnicalTerm>) -> Result<()> {
-        self.terms = snapshot;
-        self.rebuild_indices();
-        self.save()
+        
+        Ok(results)
     }
 } 

@@ -44,11 +44,15 @@ dashmap = "5.4"
 tokio-test = "0.4"
 mockall = "0.11"
 criterion = "0.4"
+tempfile = "3.8"
 
 # תלויות לסקריפט העלאה
 colored = "2.0"
 
 winapi = { version = "0.3.9", features = ["winuser"] }
+
+# למידה עמוקה
+tch = "0.13"
 
 [dev-dependencies]
 test-case = "3.1"

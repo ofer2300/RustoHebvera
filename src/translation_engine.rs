@@ -1,6 +1,11 @@
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use crate::translation_models::*;
+use tch::{nn, Device, Tensor};
+use dashmap::DashMap;
+use rayon::prelude::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 pub struct TranslationEngine {
     translation_cache: Arc<TranslationCache>,
@@ -24,6 +29,26 @@ pub struct LearningManager {
     history: Arc<Mutex<Vec<TranslationRecord>>>,
 }
 
+pub struct OptimizedTranslationEngine {
+    model: Arc<nn::Sequential>,
+    cache: DashMap<String, String>,
+    technical_terms: Arc<TechnicalDictionary>,
+    quality_control: Arc<QualityControl>,
+    tokenizer: Arc<Tokenizer>,
+}
+
+pub struct TranslationCache {
+    entries: DashMap<String, CacheEntry>,
+    stats: Arc<TranslationStats>,
+}
+
+struct CacheEntry {
+    translation: String,
+    metadata: TranslationMetadata,
+    last_access: DateTime<Utc>,
+    access_count: AtomicUsize,
+}
+
 impl TranslationEngine {
     pub async fn new() -> Result<Self, TranslationError> {
         Ok(Self {
@@ -34,107 +59,70 @@ impl TranslationEngine {
         })
     }
 
-    pub async fn translate(&self, text: &str, _from: &str, _to: &str) -> Result<String, TranslationError> {
-        // בדיקה במטמון
-        if let Some(cached) = self.translation_cache.entries.get(text) {
-            return Ok(cached.clone());
+    pub async fn translate(&self, text: &str, from: &str, to: &str) -> Result<String, TranslationError> {
+        let cache_key = format!("{}:{}:{}", text, from, to);
+        
+        // בדיקת מטמון מהירה עם מונה שימוש
+        if let Some(cached) = self.translation_cache.get_with_stats(&cache_key) {
+            return Ok(cached);
         }
 
-        let context = self.context_manager.analyze(text).await?;
-        let terms = self.terms_manager.identify_terms(text).await?;
+        // חלוקה לפסקאות לעיבוד מקבילי
+        let paragraphs: Vec<&str> = text.split('\n').collect();
+        let translated_paragraphs: Vec<String> = paragraphs.par_iter()
+            .map(|&p| self.translate_paragraph(p, from, to))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let context = self.context_manager.analyze_deep(text).await?;
+        let terms = self.terms_manager.identify_terms_with_context(text, &context).await?;
         
-        let mut translation = self.translate_with_context(text, &context).await?;
+        let mut translation = translated_paragraphs.join("\n");
         
-        // החלפת מונחים טכניים
-        translation = self.terms_manager.replace_terms(&translation, &terms).await?;
+        // שיפור איכות מתקדם
+        translation = self.apply_advanced_improvements(translation, &context).await?;
         
-        // שיפור התרגום עאמצעות מודל הלמידה
-        translation = self.learning_manager.improve_translation(&translation).await?;
+        // החלפת מונחים טכניים עם וריפיקציה
+        translation = self.terms_manager.replace_terms_verified(&translation, &terms).await?;
         
-        // בדיקות איכות
-        let quality_results = self.check_quality(&translation).await?;
+        // אופטימיזציה סופית
+        translation = self.optimize_final_translation(&translation, &context).await?;
         
-        if !quality_results.is_empty() {
-            translation = self.improve_translation_quality(&translation, &quality_results).await?;
-        }
-        
-        // שיעוד התרגום
-        self.learning_manager.record_translation(text, &translation).await?;
+        // שמירה במטמון עם מטה-דאטה
+        self.translation_cache.store_with_metadata(&cache_key, &translation, &context).await?;
         
         Ok(translation)
     }
 
-    async fn translate_with_context(&self, text: &str, context: &TranslationContext) -> Result<String, TranslationError> {
-        match context.domain {
-            Domain::Technical => {
-                self.translate_technical(text).await
-            }
-            Domain::Legal => {
-                self.translate_legal(text).await
-            }
-            Domain::General => {
-                self.translate_general(text).await
-            }
-        }
+    async fn optimize_final_translation(&self, text: &str, context: &TranslationContext) -> Result<String, TranslationError> {
+        let mut optimized = text.to_string();
+        
+        // אופטימיזציה מבוססת הקשר
+        optimized = match context.domain {
+            Domain::Technical => self.technical_optimizer.optimize(&optimized).await?,
+            Domain::Legal => self.legal_optimizer.optimize(&optimized).await?,
+            Domain::General => self.general_optimizer.optimize(&optimized).await?,
+        };
+
+        // התאמות סגנון מתקדמות
+        optimized = self.style_adapter.adapt(&optimized, &context.style).await?;
+        
+        // אופטימיזציה סופית
+        self.final_optimizer.optimize(&optimized).await
     }
 
-    async fn improve_translation_quality(
-        &self,
-        text: &str,
-        quality_results: &[QualityResult]) -> Result<String, TranslationError> {
-        let mut improved = text.to_string();
+    async fn apply_advanced_improvements(&self, text: String, context: &TranslationContext) -> Result<String, TranslationError> {
+        let mut improved = text;
         
-        for result in quality_results {
-            if !result.passed {
-                improved = self.apply_quality_improvement(&improved, &result.message).await?;
-            }
-        }
+        // שיפור קוהרנטיות
+        improved = self.coherence_improver.improve(&improved).await?;
         
-        Ok(improved)
-    }
-
-    async fn apply_quality_improvement(&self, text: &str, note: &str) -> Result<String, TranslationError> {
-        let mut improved = text.to_string();
+        // התאמת משלב לשוני
+        improved = self.register_adapter.adapt(&improved, context.formality).await?;
         
-        if note.contains("length") {
-            improved = self.adjust_length(&improved).await?;
-        }
-        
-        if note.contains("formality") {
-            improved = self.improve_formality(&improved).await?;
-        }
+        // שיפור זרימה
+        improved = self.flow_improver.improve(&improved).await?;
         
         Ok(improved)
-    }
-
-    async fn adjust_length(&self, text: &str) -> Result<String, TranslationError> {
-        // TODO: יישום התאמת אורך
-        Ok(text.to_string())
-    }
-
-    async fn improve_formality(&self, text: &str) -> Result<String, TranslationError> {
-        // TODO: יישום שיפור פורמליות
-        Ok(text.to_string())
-    }
-
-    async fn translate_technical(&self, text: &str) -> Result<String, TranslationError> {
-        // TODO: יישום תרגום טכני
-        Ok(text.to_string())
-    }
-
-    async fn translate_legal(&self, text: &str) -> Result<String, TranslationError> {
-        // TODO: יישום תרגום משפטי
-        Ok(text.to_string())
-    }
-
-    async fn translate_general(&self, text: &str) -> Result<String, TranslationError> {
-        // TODO: יישום תרגום כללי
-        Ok(text.to_string())
-    }
-
-    async fn check_quality(&self, _text: &str) -> Result<Vec<QualityResult>, TranslationError> {
-        // TODO: יישום בדיקות איכות
-        Ok(Vec::new())
     }
 }
 
@@ -270,5 +258,153 @@ impl LearningModel {
     fn improve(&self, text: &str) -> String {
         // TODO: יישום שיפור תרגום
         text.to_string()
+    }
+}
+
+impl OptimizedTranslationEngine {
+    pub fn new() -> Self {
+        let mut seq = nn::Sequential::new();
+        seq.add(nn::linear(512, 1024, Default::default()));
+        seq.add_fn(|xs| xs.relu());
+        seq.add(nn::linear(1024, 512, Default::default()));
+        
+        Self {
+            model: Arc::new(seq),
+            cache: DashMap::new(),
+            technical_terms: Arc::new(TechnicalDictionary::new()),
+            quality_control: Arc::new(QualityControl::new()),
+            tokenizer: Arc::new(Tokenizer::new()),
+        }
+    }
+
+    pub async fn translate(&self, text: &str, from: &str, to: &str) -> Result<String, TranslationError> {
+        // בדיקת מטמון מתקדמת עם TTL
+        if let Some(cached) = self.cache.get_with_ttl(text, Duration::from_secs(3600)) {
+            return Ok(cached);
+        }
+
+        // טוקניזציה והכנה לרשת
+        let tokens = self.tokenizer.encode(text)?;
+        let tensor = self.prepare_input_tensor(&tokens)?;
+        
+        // העברה דרך המודל עם שימוש ב-GPU
+        let device = Device::cuda_if_available();
+        let tensor = tensor.to(device);
+        let output = self.model.forward(&tensor);
+        
+        // פענוח התוצאה
+        let translation = self.decode_output(&output)?;
+        
+        // בדיקות איכות מתקדמות
+        self.quality_control.validate_deep(&translation).await?;
+        
+        // שמירה במטמון עם מטה-דאטה
+        self.cache.insert_with_metadata(text.to_string(), translation.clone(), 
+            CacheMetadata {
+                source_lang: from.to_string(),
+                target_lang: to.to_string(),
+                timestamp: Utc::now(),
+                quality_score: self.calculate_quality_score(&translation)?,
+            }
+        );
+        
+        Ok(translation)
+    }
+
+    fn prepare_input_tensor(&self, tokens: &[i64]) -> Result<Tensor, TranslationError> {
+        let device = Device::cuda_if_available();
+        let options = (Kind::Int64, device);
+        
+        // הוספת padding אם נדרש
+        let padded = self.pad_sequence(tokens, 512);
+        
+        // יצירת טנסור
+        let tensor = Tensor::of_slice(&padded).to(device);
+        
+        // הוספת ממד האצווה
+        let tensor = tensor.unsqueeze(0);
+        
+        // הוספת מסיכת תשומת לב
+        let attention_mask = self.create_attention_mask(&tensor)?;
+        
+        Ok((tensor, attention_mask))
+    }
+
+    fn decode_output(&self, output: &Tensor) -> Result<String, TranslationError> {
+        // המרה חזרה לטוקנים
+        let logits = output.argmax(-1, false);
+        let tokens: Vec<i64> = logits.into();
+        
+        // פענוח טוקנים לטקסט
+        let text = self.tokenizer.decode(&tokens)?;
+        
+        // ניקוי וסידור סופי
+        let cleaned = self.post_process_text(&text)?;
+        
+        Ok(cleaned)
+    }
+
+    fn calculate_quality_score(&self, text: &str) -> Result<f64, TranslationError> {
+        let mut score = 0.0;
+        
+        // בדיקת שטף
+        score += self.fluency_scorer.score(text)?;
+        
+        // בדיקת דיוק
+        score += self.accuracy_scorer.score(text)?;
+        
+        // בדיקת עקביות
+        score += self.consistency_scorer.score(text)?;
+        
+        Ok(score / 3.0)
+    }
+}
+
+// מטמון משופר עם TTL ומטה-דאטה
+impl DashMap<String, CacheEntry> {
+    pub fn get_with_ttl(&self, key: &str, ttl: Duration) -> Option<String> {
+        if let Some(entry) = self.get(key) {
+            if entry.metadata.timestamp + ttl > Utc::now() {
+                Some(entry.translation.clone())
+            } else {
+                self.remove(key);
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn insert_with_metadata(&self, key: String, value: String, metadata: CacheMetadata) {
+        self.insert(key, CacheEntry {
+            translation: value,
+            metadata,
+        });
+    }
+}
+
+impl TranslationCache {
+    pub fn get_with_stats(&self, key: &str) -> Option<String> {
+        if let Some(entry) = self.entries.get(key) {
+            entry.access_count.fetch_add(1, Ordering::Relaxed);
+            self.stats.record_hit();
+            Some(entry.translation.clone())
+        } else {
+            self.stats.record_miss();
+            None
+        }
+    }
+
+    pub async fn store_with_metadata(&self, key: &str, translation: &str, context: &TranslationContext) -> Result<(), TranslationError> {
+        let entry = CacheEntry {
+            translation: translation.to_string(),
+            metadata: TranslationMetadata::new(context),
+            last_access: Utc::now(),
+            access_count: AtomicUsize::new(1),
+        };
+        
+        self.entries.insert(key.to_string(), entry);
+        self.stats.record_store();
+        Ok(())
     }
 } 
