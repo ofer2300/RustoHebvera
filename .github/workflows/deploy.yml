@@ -19,8 +19,15 @@ jobs:
       - name: Build
         run: cargo build --release
 
+      - name: Copy static files
+        run: |
+          mkdir -p dist
+          cp -r static/* dist/
+          cp target/release/rustohebru dist/
+          cp target/release/index.html dist/
+
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./target/release 
+          publish_dir: ./dist 

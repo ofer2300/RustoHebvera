@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RustoHebru - תרגום הנדסי רוסית-עברית</title>
+    <base href="/RustoHebvera/">
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -33,6 +34,7 @@
             border: 1px solid #ddd;
             border-radius: 4px;
             resize: vertical;
+            direction: auto;
         }
         button {
             background: #3498db;
@@ -46,6 +48,11 @@
         button:hover {
             background: #2980b9;
         }
+        .status {
+            text-align: center;
+            margin-top: 10px;
+            color: #666;
+        }
     </style>
 </head>
 <body>
@@ -54,23 +61,44 @@
         <h2>תרגום הנדסי מרוסית לעברית</h2>
         
         <div class="input-area">
-            <textarea placeholder="הכנס טקסט ברוסית לתרגום..."></textarea>
+            <textarea placeholder="הכנס טקסט ברוסית לתרגום..." dir="auto"></textarea>
         </div>
         
         <button onclick="translate()">תרגם</button>
         
         <div class="input-area">
-            <textarea placeholder="התרגום יופיע כאן..." readonly></textarea>
+            <textarea placeholder="התרגום יופיע כאן..." readonly dir="rtl"></textarea>
         </div>
+
+        <div class="status" id="status"></div>
     </div>
 
     <script>
+        const API_URL = 'https://api.rustohebru.com/translate';
+        const MOCK_MODE = true; // מצב הדגמה
+
         async function translate() {
             const input = document.querySelector('textarea');
             const output = document.querySelectorAll('textarea')[1];
+            const status = document.getElementById('status');
+            
+            if (!input.value.trim()) {
+                status.textContent = 'אנא הכנס טקסט לתרגום';
+                return;
+            }
+
+            status.textContent = 'מתרגם...';
             
             try {
-                const response = await fetch('/api/translate', {
+                if (MOCK_MODE) {
+                    // הדגמה - תרגום מדומה
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    output.value = `תרגום הדגמה: ${input.value}`;
+                    status.textContent = 'התרגום הושלם בהצלחה';
+                    return;
+                }
+
+                const response = await fetch(API_URL, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -78,10 +106,17 @@
                     body: JSON.stringify({ text: input.value }),
                 });
                 
+                if (!response.ok) {
+                    throw new Error('שגיאת שרת');
+                }
+
                 const data = await response.json();
                 output.value = data.translation;
+                status.textContent = 'התרגום הושלם בהצלחה';
             } catch (error) {
-                output.value = 'אירעה שגיאה בתרגום. אנא נסה שוב.';
+                console.error('Translation error:', error);
+                output.value = '';
+                status.textContent = 'אירעה שגיאה בתרגום. אנא נסה שוב מאוחר יותר.';
             }
         }
     </script>
