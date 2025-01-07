@@ -32,11 +32,19 @@ fn main() {
 
     // משיכת שינויים מהשרת
     println!("מושך שינויים מהשרת...");
-    if let Err(e) = Command::new("git")
-        .args(&["pull", "origin", "upgraded-version"])
-        .status() {
-        eprintln!("{}", format!("שגיאה במשיכת שינויים: {}", e).red());
-        // ממשיכים גם אם יש שגיאה במשיכה, כי ייתכן שהענף לא קיים בשרת
+    let pull_result = Command::new("git")
+        .args(&["pull", "origin", "upgraded-version", "--allow-unrelated-histories"])
+        .status();
+
+    match pull_result {
+        Ok(status) => {
+            if !status.success() {
+                println!("אזהרה: לא הצלחתי למשוך שינויים מהשרת. ממשיך בכל זאת...");
+            }
+        }
+        Err(e) => {
+            println!("אזהרה: שגיאה במשיכת שינויים: {}. ממשיך בכל זאת...", e);
+        }
     }
 
     // הוספת כל השינויים
@@ -60,7 +68,7 @@ fn main() {
     // דחיפת שינויים לשרת
     println!("דוחף שינויים לשרת...");
     let push_result = Command::new("git")
-        .args(&["push", "-u", "origin", "upgraded-version"])
+        .args(&["push", "-f", "origin", "upgraded-version"])
         .output()
         .expect("שגיאה בדחיפה לשרת");
 
