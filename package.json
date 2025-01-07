@@ -1,8 +1,8 @@
 {
   "name": "rustohebru",
   "version": "1.0.0",
+  "private": true,
   "scripts": {
-    "build": "cargo build --release",
-    "start": "cargo run --release"
+    "vercel-build": "cargo build --release"
   }
 } 
