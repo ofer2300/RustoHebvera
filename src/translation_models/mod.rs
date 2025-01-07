@@ -4,7 +4,6 @@ mod style;
 pub use domain::DomainModel;
 pub use style::StyleModel;
 
-use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 
 /// הקשר תרגום

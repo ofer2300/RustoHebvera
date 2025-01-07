@@ -35,6 +35,11 @@ impl TranslationEngine {
     }
 
     pub async fn translate(&self, text: &str, _from: &str, _to: &str) -> Result<String, TranslationError> {
+        // בדיקה במטמון
+        if let Some(cached) = self.translation_cache.entries.get(text) {
+            return Ok(cached.clone());
+        }
+
         let context = self.context_manager.analyze(text).await?;
         let terms = self.terms_manager.identify_terms(text).await?;
         
@@ -141,13 +146,25 @@ impl ContextManager {
         })
     }
 
-    pub async fn analyze(&self, _text: &str) -> Result<TranslationContext, TranslationError> {
-        // TODO: יישום ניתוח הקשר
-        Ok(TranslationContext {
-            domain: Domain::General,
-            style: Style::Formal,
-            formality: Formality::Medium,
-        })
+    pub async fn analyze(&self, text: &str) -> Result<TranslationContext, TranslationError> {
+        let mut contexts = self.contexts.lock().unwrap();
+        
+        // בדיקה אם יש ניתוח קיים
+        if let Some(context) = contexts.get(text) {
+            return Ok(context.clone());
+        }
+        
+        // ניתוח חדש
+        let context = TranslationContext {
+            domain: self.analyzer.detect_domain(text),
+            style: self.analyzer.detect_style(text),
+            formality: self.analyzer.detect_formality(text),
+        };
+        
+        // שמירת התוצאה
+        contexts.insert(text.to_string(), context.clone());
+        
+        Ok(context)
     }
 }
 
@@ -159,9 +176,18 @@ impl TechnicalTermsManager {
         })
     }
 
-    pub async fn identify_terms(&self, _text: &str) -> Result<Vec<TechnicalTerm>, TranslationError> {
-        // TODO: יישום זיהוי מונחים
-        Ok(Vec::new())
+    pub async fn identify_terms(&self, text: &str) -> Result<Vec<TechnicalTerm>, TranslationError> {
+        let terms = self.terms.lock().unwrap();
+        let mut identified = Vec::new();
+        
+        // זיהוי מונחים באמצעות המנתח
+        for term in terms.values() {
+            if self.analyzer.is_term_in_text(text, &term.source) {
+                identified.push(term.clone());
+            }
+        }
+        
+        Ok(identified)
     }
 
     pub async fn replace_terms(&self, text: &str, _terms: &[TechnicalTerm]) -> Result<String, TranslationError> {
@@ -179,8 +205,9 @@ impl LearningManager {
     }
 
     pub async fn improve_translation(&self, text: &str) -> Result<String, TranslationError> {
-        // TODO: יישום שיפור תרגום
-        Ok(text.to_string())
+        let model = self.model.lock().unwrap();
+        let improved = model.improve(text);
+        Ok(improved)
     }
 
     pub async fn record_translation(&self, source: &str, target: &str) -> Result<(), TranslationError> {
@@ -196,5 +223,52 @@ impl LearningManager {
             },
         });
         Ok(())
+    }
+}
+
+impl ContextAnalyzer {
+    fn detect_domain(&self, text: &str) -> Domain {
+        // TODO: יישום זיהוי תחום
+        if text.contains("מערכת") || text.contains("התקנה") {
+            Domain::Technical
+        } else if text.contains("חוק") || text.contains("תקנה") {
+            Domain::Legal
+        } else {
+            Domain::General
+        }
+    }
+
+    fn detect_style(&self, text: &str) -> Style {
+        // TODO: יישום זיהוי סגנון
+        if text.contains("נא") || text.contains("בבקשה") {
+            Style::Casual
+        } else {
+            Style::Formal
+        }
+    }
+
+    fn detect_formality(&self, text: &str) -> Formality {
+        // TODO: יישום זיהוי רמת פורמליות
+        if text.contains("להלן") || text.contains("בהתאם") {
+            Formality::High
+        } else if text.contains("אנא") || text.contains("בבקשה") {
+            Formality::Medium
+        } else {
+            Formality::Low
+        }
+    }
+}
+
+impl TermAnalyzer {
+    fn is_term_in_text(&self, text: &str, term: &str) -> bool {
+        // TODO: יישום בדיקת נוכחות מונח
+        text.contains(term)
+    }
+}
+
+impl LearningModel {
+    fn improve(&self, text: &str) -> String {
+        // TODO: יישום שיפור תרגום
+        text.to_string()
     }
 } 
