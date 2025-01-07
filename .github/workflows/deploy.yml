@@ -30,7 +30,7 @@ jobs:
       - name: Configure Pages
         run: |
           echo "/* /index.html 200" > dist/_redirects
-          echo "baseUrl=/RustoHebvera/" > dist/config.js
+          echo "baseUrl=/RustoHebru/" > dist/config.js
 
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v3
