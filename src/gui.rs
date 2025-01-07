@@ -1,198 +1,381 @@
-use eframe::egui;
-use egui::{Color32, RichText, Stroke, Rounding, Vec2};
+use eframe::{egui, epi};
+use egui::{Color32, RichText, TextEdit, Ui};
 use std::sync::Arc;
-use std::path::PathBuf;
-use rfd::FileDialog;
-use std::collections::{HashMap, HashSet};
-use chrono::{DateTime, Utc};
-use crate::templates::TemplateManager;
-use crate::template_translator::TemplateTranslator;
-use crate::metadata::DocumentMetadata;
-use crate::technical_dictionary::{TechnicalDictionary, TechnicalTerm, SearchQuery};
-use std::sync::Mutex;
+use tokio::sync::Mutex;
+use anyhow::Result;
+
+use crate::translation_engine::TranslationEngine;
+use crate::quality_control::{QualityControl, ValidationReport};
+use crate::learning_manager::{LearningManager, LearningEvent, LearningEventType, UserFeedback};
+use chrono::Utc;
 
 pub struct ModernGui {
-    translation_engine: Arc<OptimizedTranslationEngine>,
-    input_text: String,
-    output_text: String,
-    selected_source_lang: String,
-    selected_target_lang: String,
+    translation_engine: Arc<TranslationEngine>,
+    quality_control: Arc<QualityControl>,
+    learning_manager: Arc<LearningManager>,
+    
+    // מצב הממשק
+    source_text: String,
+    target_text: String,
+    source_language: Language,
+    target_language: Language,
     is_processing: bool,
-    theme: Theme,
-    animation_state: AnimationState,
-    quality_report: Option<ValidationReport>,
-    suggestions: Vec<String>,
-    history: Vec<TranslationRecord>,
-    is_dark_mode: bool,
+    
+    // תוצאות בדיקה
+    validation_report: Option<ValidationReport>,
+    
+    // משוב משתמש
+    user_rating: Option<u8>,
+    user_comments: String,
+    
+    // מצב תצוגה
+    show_advanced: bool,
+    show_statistics: bool,
+    dark_mode: bool,
 }
 
-struct Theme {
-    primary_color: Color32,
-    secondary_color: Color32,
-    background_color: Color32,
-    text_color: Color32,
-    accent_color: Color32,
-    error_color: Color32,
-    success_color: Color32,
+#[derive(Debug, Clone, PartialEq)]
+enum Language {
+    Hebrew,
+    Russian,
 }
 
-struct AnimationState {
-    progress: f32,
-    translation_opacity: f32,
-    suggestions_height: f32,
+impl Default for ModernGui {
+    fn default() -> Self {
+        Self {
+            translation_engine: Arc::new(TranslationEngine::new()),
+            quality_control: Arc::new(QualityControl::new()),
+            learning_manager: Arc::new(LearningManager::new()),
+            
+            source_text: String::new(),
+            target_text: String::new(),
+            source_language: Language::Hebrew,
+            target_language: Language::Russian,
+            is_processing: false,
+            
+            validation_report: None,
+            
+            user_rating: None,
+            user_comments: String::new(),
+            
+            show_advanced: false,
+            show_statistics: false,
+            dark_mode: false,
+        }
+    }
+}
+
+impl epi::App for ModernGui {
+    fn name(&self) -> &str {
+        "RustoHebvera - מתרגם טכני"
+    }
+
+    fn update(&mut self, ctx: &egui::Context, _frame: &epi::Frame) {
+        self.render_main_panel(ctx);
+        
+        if self.show_advanced {
+            self.render_advanced_panel(ctx);
+        }
+        
+        if self.show_statistics {
+            self.render_statistics_panel(ctx);
+        }
+    }
 }
 
 impl ModernGui {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let theme = Theme::light();
-        
-        let translation_engine = Arc::new(OptimizedTranslationEngine::new());
-        
+    pub fn new(
+        translation_engine: Arc<TranslationEngine>,
+        quality_control: Arc<QualityControl>,
+        learning_manager: Arc<LearningManager>,
+    ) -> Self {
         Self {
             translation_engine,
-            input_text: String::new(),
-            output_text: String::new(),
-            selected_source_lang: "he".to_string(),
-            selected_target_lang: "ru".to_string(),
-            is_processing: false,
-            theme,
-            animation_state: AnimationState::default(),
-            quality_report: None,
-            suggestions: Vec::new(),
-            history: Vec::new(),
-            is_dark_mode: false,
+            quality_control,
+            learning_manager,
+            ..Default::default()
         }
     }
 
-    pub fn update(&mut self, ctx: &egui::Context) {
-        self.update_animations(ctx.frame_time());
-        
-        self.theme = if self.is_dark_mode {
-            Theme::dark()
-        } else {
-            Theme::light()
-        };
-        
+    fn render_main_panel(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            self.draw_header(ui);
-            self.draw_main_content(ui);
-            self.draw_footer(ui);
-        });
-        
-        if let Some(report) = &self.quality_report {
-            self.draw_quality_report(ctx, report);
-        }
-        
-        egui::Window::new("היסטוריה")
-            .open(&mut self.show_history)
-            .show(ctx, |ui| {
-                self.draw_history(ui);
+            // כותרת
+            ui.heading("RustoHebvera - מתרגם טכני");
+            ui.add_space(20.0);
+            
+            // בחירת שפות
+            self.render_language_selector(ui);
+            ui.add_space(10.0);
+            
+            // אזור טקסט מקור
+            ui.group(|ui| {
+                ui.label(RichText::new("טקסט מקור").size(16.0));
+                ui.add_sized(
+                    [ui.available_width(), 150.0],
+                    TextEdit::multiline(&mut self.source_text)
+                );
             });
-    }
-
-    fn draw_header(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.image(self.theme.logo_id, Vec2::new(32.0, 32.0));
             
-            ui.heading(
-                RichText::new("RustoHebru - מתרגם מתקדם")
-                    .color(self.theme.primary_color)
-                    .size(24.0)
-            );
+            // כפתור תרגום
+            if ui.add_enabled(
+                !self.is_processing && !self.source_text.is_empty(),
+                egui::Button::new("תרגם")
+            ).clicked() {
+                self.start_translation();
+            }
             
-            ui.with_layout(egui::Layout::right_to_left(true), |ui| {
-                if ui.button("⚙️").clicked() {
-                    self.show_settings = true;
+            // אזור טקסט מתורגם
+            ui.group(|ui| {
+                ui.label(RichText::new("תרגום").size(16.0));
+                ui.add_sized(
+                    [ui.available_width(), 150.0],
+                    TextEdit::multiline(&mut self.target_text)
+                        .text_color(if self.is_processing {
+                            Color32::GRAY
+                        } else {
+                            Color32::WHITE
+                        })
+                );
+            });
+            
+            // תוצאות בדיקת איכות
+            if let Some(report) = &self.validation_report {
+                self.render_validation_results(ui, report);
+            }
+            
+            // משוב משתמש
+            self.render_feedback_section(ui);
+            
+            // כפתורים נוספים
+            ui.horizontal(|ui| {
+                if ui.button("הגדרות מתקדמות").clicked() {
+                    self.show_advanced = !self.show_advanced;
                 }
-                
-                ui.toggle_value(&mut self.is_dark_mode, "🌙");
+                if ui.button("סטטיסטיקות").clicked() {
+                    self.show_statistics = !self.show_statistics;
+                }
+                if ui.button(if self.dark_mode {
+                    "מצב בהיר"
+                } else {
+                    "מצב כהה"
+                }).clicked() {
+                    self.dark_mode = !self.dark_mode;
+                    self.update_theme(ctx);
+                }
             });
         });
     }
 
-    fn draw_main_content(&mut self, ui: &mut egui::Ui) {
+    fn render_language_selector(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            self.draw_language_selector(ui);
+            ui.label("שפת מקור:");
+            ui.selectable_value(&mut self.source_language, Language::Hebrew, "עברית");
+            ui.selectable_value(&mut self.source_language, Language::Russian, "רוסית");
+            
+            ui.separator();
+            
+            ui.label("שפת יעד:");
+            ui.selectable_value(&mut self.target_language, Language::Hebrew, "עברית");
+            ui.selectable_value(&mut self.target_language, Language::Russian, "רוסית");
+            
+            if ui.button("⇄").clicked() {
+                std::mem::swap(&mut self.source_language, &mut self.target_language);
+                std::mem::swap(&mut self.source_text, &mut self.target_text);
+            }
         });
-        
-        ui.add_space(10.0);
-        
-        ui.group(|ui| {
-            ui.set_height(200.0);
-            self.draw_input_area(ui);
-        });
-        
-        let translate_button = ui.add_sized(
-            [120.0, 40.0],
-            egui::Button::new(
-                RichText::new(if self.is_processing { "מתרגם..." } else { "תרגם" })
-                    .size(18.0)
-            ).fill(self.theme.primary_color)
-        );
-        
-        if translate_button.clicked() && !self.is_processing {
-            self.start_translation();
-        }
-        
-        ui.group(|ui| {
-            ui.set_height(200.0);
-            self.draw_output_area(ui);
-        });
-        
-        if !self.suggestions.is_empty() {
-            self.draw_suggestions(ui);
-        }
     }
 
-    fn draw_suggestions(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new("הצעות שיפור")
-            .default_open(true)
-            .show(ui, |ui| {
-                for suggestion in &self.suggestions {
-                    ui.label(
-                        RichText::new(suggestion)
-                            .color(self.theme.accent_color)
+    fn render_validation_results(&mut self, ui: &mut Ui, report: &ValidationReport) {
+        ui.group(|ui| {
+            ui.label(RichText::new("תוצאות בדיקת איכות").size(16.0));
+            
+            ui.horizontal(|ui| {
+                ui.label("ציון דקדוק:");
+                ui.label(format!("{:.1}%", report.grammar_score * 100.0));
+            });
+            
+            ui.horizontal(|ui| {
+                ui.label("ציון סגנון:");
+                ui.label(format!("{:.1}%", report.style_score * 100.0));
+            });
+            
+            ui.horizontal(|ui| {
+                ui.label("ציון מונחים:");
+                ui.label(format!("{:.1}%", report.terminology_score * 100.0));
+            });
+            
+            if !report.issues.is_empty() {
+                ui.label(RichText::new("בעיות שזוהו:").color(Color32::YELLOW));
+                for issue in &report.issues {
+                    ui.label(RichText::new(&issue.description)
+                        .color(match issue.severity {
+                            IssueSeverity::Low => Color32::GRAY,
+                            IssueSeverity::Medium => Color32::YELLOW,
+                            IssueSeverity::High => Color32::LIGHT_RED,
+                            IssueSeverity::Critical => Color32::RED,
+                        })
                     );
                 }
+            }
+        });
+    }
+
+    fn render_feedback_section(&mut self, ui: &mut Ui) {
+        ui.group(|ui| {
+            ui.label(RichText::new("משוב").size(16.0));
+            
+            // דירוג
+            ui.horizontal(|ui| {
+                ui.label("דירוג:");
+                for rating in 1..=5 {
+                    if ui.selectable_label(
+                        self.user_rating == Some(rating),
+                        "★"
+                    ).clicked() {
+                        self.user_rating = Some(rating);
+                    }
+                }
+            });
+            
+            // הערות
+            ui.label("הערות:");
+            ui.text_edit_multiline(&mut self.user_comments);
+            
+            if ui.button("שלח משוב").clicked() {
+                self.submit_feedback();
+            }
+        });
+    }
+
+    fn render_advanced_panel(&mut self, ctx: &egui::Context) {
+        egui::Window::new("הגדרות מתקדמות")
+            .open(&mut self.show_advanced)
+            .show(ctx, |ui| {
+                // TODO: הוספת הגדרות מתקדמות
             });
     }
 
-    fn update_animations(&mut self, delta_time: f32) {
-        if self.is_processing {
-            self.animation_state.progress = (self.animation_state.progress + delta_time * 2.0) % 1.0;
-        }
+    fn render_statistics_panel(&mut self, ctx: &egui::Context) {
+        egui::Window::new("סטטיסטיקות")
+            .open(&mut self.show_statistics)
+            .show(ctx, |ui| {
+                // TODO: הצגת סטטיסטיקות
+            });
+    }
+
+    fn start_translation(&mut self) {
+        self.is_processing = true;
+        self.validation_report = None;
+        self.user_rating = None;
+        self.user_comments.clear();
         
-        if !self.output_text.is_empty() {
-            self.animation_state.translation_opacity = 
-                (self.animation_state.translation_opacity + delta_time * 3.0).min(1.0);
+        // יצירת אירוע תרגום
+        let event = LearningEvent {
+            timestamp: Utc::now(),
+            event_type: LearningEventType::Translation,
+            source_text: self.source_text.clone(),
+            target_text: String::new(),
+            validation_report: None,
+            user_feedback: None,
+            confidence_score: 0.0,
+        };
+        
+        // הפעלת מנוע התרגום
+        let translation_engine = self.translation_engine.clone();
+        let quality_control = self.quality_control.clone();
+        let learning_manager = self.learning_manager.clone();
+        let source_text = self.source_text.clone();
+        
+        tokio::spawn(async move {
+            // תרגום
+            let translation = translation_engine.translate(&source_text).await?;
+            
+            // בדיקת איכות
+            let validation = quality_control.validate_deep(&translation).await?;
+            
+            // עדכון אירוע הלמידה
+            let mut event = event;
+            event.target_text = translation.clone();
+            event.validation_report = Some(validation.clone());
+            learning_manager.record_event(event).await?;
+            
+            Ok::<_, anyhow::Error>((translation, validation))
+        });
+    }
+
+    fn submit_feedback(&mut self) {
+        if let Some(rating) = self.user_rating {
+            let feedback = UserFeedback {
+                rating,
+                comments: if self.user_comments.is_empty() {
+                    None
+                } else {
+                    Some(self.user_comments.clone())
+                },
+                corrections: None,
+            };
+            
+            let event = LearningEvent {
+                timestamp: Utc::now(),
+                event_type: LearningEventType::Feedback,
+                source_text: self.source_text.clone(),
+                target_text: self.target_text.clone(),
+                validation_report: self.validation_report.clone(),
+                user_feedback: Some(feedback),
+                confidence_score: 1.0,
+            };
+            
+            let learning_manager = self.learning_manager.clone();
+            tokio::spawn(async move {
+                learning_manager.record_event(event).await?;
+                Ok::<_, anyhow::Error>(())
+            });
         }
+    }
+
+    fn update_theme(&self, ctx: &egui::Context) {
+        let mut visuals = if self.dark_mode {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        };
+        
+        // התאמות נוספות לערכת הנושא
+        visuals.window_rounding = 10.0.into();
+        visuals.window_shadow.extrusion = 20.0;
+        
+        ctx.set_visuals(visuals);
     }
 }
 
-impl Theme {
-    fn light() -> Self {
-        Self {
-            primary_color: Color32::from_rgb(63, 81, 181),
-            secondary_color: Color32::from_rgb(103, 58, 183),
-            background_color: Color32::from_rgb(250, 250, 250),
-            text_color: Color32::from_rgb(33, 33, 33),
-            accent_color: Color32::from_rgb(0, 150, 136),
-            error_color: Color32::from_rgb(244, 67, 54),
-            success_color: Color32::from_rgb(76, 175, 80),
-        }
-    }
-    
-    fn dark() -> Self {
-        Self {
-            primary_color: Color32::from_rgb(98, 0, 238),
-            secondary_color: Color32::from_rgb(3, 218, 197),
-            background_color: Color32::from_rgb(18, 18, 18),
-            text_color: Color32::from_rgb(255, 255, 255),
-            accent_color: Color32::from_rgb(0, 200, 180),
-            error_color: Color32::from_rgb(255, 82, 82),
-            success_color: Color32::from_rgb(100, 221, 23),
-        }
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-// ... existing code ... 
+    #[test]
+    fn test_gui_creation() {
+        let gui = ModernGui::default();
+        assert_eq!(gui.source_language, Language::Hebrew);
+        assert_eq!(gui.target_language, Language::Russian);
+        assert!(!gui.is_processing);
+    }
+
+    #[test]
+    fn test_language_swap() {
+        let mut gui = ModernGui::default();
+        gui.source_text = "שלום".to_string();
+        gui.target_text = "привет".to_string();
+        
+        let original_source = gui.source_language.clone();
+        let original_target = gui.target_language.clone();
+        
+        // החלפת שפות
+        std::mem::swap(&mut gui.source_language, &mut gui.target_language);
+        std::mem::swap(&mut gui.source_text, &mut gui.target_text);
+        
+        assert_eq!(gui.source_language, original_target);
+        assert_eq!(gui.target_language, original_source);
+        assert_eq!(gui.source_text, "привет");
+        assert_eq!(gui.target_text, "שלום");
+    }
+} 

@@ -1,410 +1,232 @@
-use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
-use crate::translation_models::*;
-use tch::{nn, Device, Tensor};
-use dashmap::DashMap;
-use rayon::prelude::*;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use anyhow::Result;
+use crate::morphology::{
+    HebrewMorphology, RussianMorphology,
+    HebrewAnalyzer, RussianAnalyzer,
+    MorphologyCache, MorphologyError,
+};
+use crate::neural::{NeuralTranslator, TranslatorConfig};
+use crate::quality_control::QualityControl;
+use crate::technical_terms::TermsDatabase;
 
 pub struct TranslationEngine {
-    translation_cache: Arc<TranslationCache>,
-    context_manager: ContextManager,
-    terms_manager: TechnicalTermsManager,
-    learning_manager: LearningManager,
-}
-
-pub struct ContextManager {
-    contexts: Arc<Mutex<HashMap<String, TranslationContext>>>,
-    analyzer: ContextAnalyzer,
-}
-
-pub struct TechnicalTermsManager {
-    terms: Arc<Mutex<HashMap<String, TechnicalTerm>>>,
-    analyzer: TermAnalyzer,
-}
-
-pub struct LearningManager {
-    model: Arc<Mutex<LearningModel>>,
-    history: Arc<Mutex<Vec<TranslationRecord>>>,
-}
-
-pub struct OptimizedTranslationEngine {
-    model: Arc<nn::Sequential>,
-    cache: DashMap<String, String>,
-    technical_terms: Arc<TechnicalDictionary>,
+    hebrew_analyzer: Arc<HebrewAnalyzer>,
+    russian_analyzer: Arc<RussianAnalyzer>,
+    morphology_cache: Arc<MorphologyCache>,
+    neural_translator: Arc<NeuralTranslator>,
     quality_control: Arc<QualityControl>,
-    tokenizer: Arc<Tokenizer>,
-}
-
-pub struct TranslationCache {
-    entries: DashMap<String, CacheEntry>,
-    stats: Arc<TranslationStats>,
-}
-
-struct CacheEntry {
-    translation: String,
-    metadata: TranslationMetadata,
-    last_access: DateTime<Utc>,
-    access_count: AtomicUsize,
+    terms_db: Arc<TermsDatabase>,
 }
 
 impl TranslationEngine {
-    pub async fn new() -> Result<Self, TranslationError> {
-        Ok(Self {
-            translation_cache: Arc::new(TranslationCache::new()),
-            context_manager: ContextManager::new().await?,
-            terms_manager: TechnicalTermsManager::new().await?,
-            learning_manager: LearningManager::new().await?,
-        })
-    }
-
-    pub async fn translate(&self, text: &str, from: &str, to: &str) -> Result<String, TranslationError> {
-        let cache_key = format!("{}:{}:{}", text, from, to);
+    pub async fn new() -> Result<Self> {
+        let hebrew_analyzer = Arc::new(HebrewAnalyzer::new());
+        let russian_analyzer = Arc::new(RussianAnalyzer::new());
+        let morphology_cache = Arc::new(MorphologyCache::new(3600)); // TTL של שעה
         
-        // בדיקת מטמון מהירה עם מונה שימוש
-        if let Some(cached) = self.translation_cache.get_with_stats(&cache_key) {
-            return Ok(cached);
-        }
-
-        // חלוקה לפסקאות לעיבוד מקבילי
-        let paragraphs: Vec<&str> = text.split('\n').collect();
-        let translated_paragraphs: Vec<String> = paragraphs.par_iter()
-            .map(|&p| self.translate_paragraph(p, from, to))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let context = self.context_manager.analyze_deep(text).await?;
-        let terms = self.terms_manager.identify_terms_with_context(text, &context).await?;
-        
-        let mut translation = translated_paragraphs.join("\n");
-        
-        // שיפור איכות מתקדם
-        translation = self.apply_advanced_improvements(translation, &context).await?;
-        
-        // החלפת מונחים טכניים עם וריפיקציה
-        translation = self.terms_manager.replace_terms_verified(&translation, &terms).await?;
-        
-        // אופטימיזציה סופית
-        translation = self.optimize_final_translation(&translation, &context).await?;
-        
-        // שמירה במטמון עם מטה-דאטה
-        self.translation_cache.store_with_metadata(&cache_key, &translation, &context).await?;
-        
-        Ok(translation)
-    }
-
-    async fn optimize_final_translation(&self, text: &str, context: &TranslationContext) -> Result<String, TranslationError> {
-        let mut optimized = text.to_string();
-        
-        // אופטימיזציה מבוססת הקשר
-        optimized = match context.domain {
-            Domain::Technical => self.technical_optimizer.optimize(&optimized).await?,
-            Domain::Legal => self.legal_optimizer.optimize(&optimized).await?,
-            Domain::General => self.general_optimizer.optimize(&optimized).await?,
+        let config = TranslatorConfig {
+            hidden_size: 256,
+            embedding_dim: 128,
+            num_layers: 2,
+            num_heads: 8,
+            dropout: 0.1,
+            source_vocab_size: 50000,
+            target_vocab_size: 50000,
         };
-
-        // התאמות סגנון מתקדמות
-        optimized = self.style_adapter.adapt(&optimized, &context.style).await?;
         
-        // אופטימיזציה סופית
-        self.final_optimizer.optimize(&optimized).await
-    }
-
-    async fn apply_advanced_improvements(&self, text: String, context: &TranslationContext) -> Result<String, TranslationError> {
-        let mut improved = text;
+        let neural_translator = Arc::new(NeuralTranslator::new(
+            config,
+            Arc::new(Default::default()),
+            Arc::new(Default::default()),
+        )?);
         
-        // שיפור קוהרנטיות
-        improved = self.coherence_improver.improve(&improved).await?;
+        let quality_control = Arc::new(QualityControl::new());
+        let terms_db = Arc::new(TermsDatabase::new());
         
-        // התאמת משלב לשוני
-        improved = self.register_adapter.adapt(&improved, context.formality).await?;
-        
-        // שיפור זרימה
-        improved = self.flow_improver.improve(&improved).await?;
-        
-        Ok(improved)
-    }
-}
-
-impl ContextManager {
-    pub async fn new() -> Result<Self, TranslationError> {
         Ok(Self {
-            contexts: Arc::new(Mutex::new(HashMap::new())),
-            analyzer: ContextAnalyzer::new(),
+            hebrew_analyzer,
+            russian_analyzer,
+            morphology_cache,
+            neural_translator,
+            quality_control,
+            terms_db,
         })
     }
 
-    pub async fn analyze(&self, text: &str) -> Result<TranslationContext, TranslationError> {
-        let mut contexts = self.contexts.lock().unwrap();
+    pub async fn translate(&self, text: &str, source_lang: &str, target_lang: &str) -> Result<String> {
+        // ניתוח מורפולוגי של טקסט המקור
+        let morphological_analysis = match source_lang {
+            "he" => self.analyze_hebrew(text).await?,
+            "ru" => self.analyze_russian(text).await?,
+            _ => return Err(anyhow::anyhow!("שפת מקור לא נתמכת")),
+        };
         
-        // בדיקה אם יש ניתוח קיים
-        if let Some(context) = contexts.get(text) {
-            return Ok(context.clone());
+        // תרגום בסיסי
+        let base_translation = self.neural_translator.translate(&[text.to_string()])?
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("שגיאה בתרגום"))?
+            .clone();
+        
+        // התאמה דקדוקית של התרגום
+        let grammar_adjusted = self.adjust_grammar(
+            &base_translation,
+            source_lang,
+            target_lang,
+            &morphological_analysis,
+        ).await?;
+        
+        // בקרת איכות
+        let validated = self.quality_control.validate_deep(&grammar_adjusted).await?;
+        
+        Ok(validated.text)
+    }
+
+    async fn analyze_hebrew(&self, text: &str) -> Result<HebrewMorphology> {
+        // בדיקה במטמון
+        if let Some(cached) = self.morphology_cache.get_hebrew(text) {
+            return Ok(cached);
         }
         
         // ניתוח חדש
-        let context = TranslationContext {
-            domain: self.analyzer.detect_domain(text),
-            style: self.analyzer.detect_style(text),
-            formality: self.analyzer.detect_formality(text),
-        };
+        let analysis = self.hebrew_analyzer.analyze(text)
+            .map_err(|e| anyhow::anyhow!("שגיאת ניתוח מורפולוגי בעברית: {}", e))?;
         
-        // שמירת התוצאה
-        contexts.insert(text.to_string(), context.clone());
+        // שמירה במטמון
+        self.morphology_cache.set_hebrew(text.to_string(), analysis.clone());
         
-        Ok(context)
-    }
-}
-
-impl TechnicalTermsManager {
-    pub async fn new() -> Result<Self, TranslationError> {
-        Ok(Self {
-            terms: Arc::new(Mutex::new(HashMap::new())),
-            analyzer: TermAnalyzer::new(),
-        })
+        Ok(analysis)
     }
 
-    pub async fn identify_terms(&self, text: &str) -> Result<Vec<TechnicalTerm>, TranslationError> {
-        let terms = self.terms.lock().unwrap();
-        let mut identified = Vec::new();
-        
-        // זיהוי מונחים באמצעות המנתח
-        for term in terms.values() {
-            if self.analyzer.is_term_in_text(text, &term.source) {
-                identified.push(term.clone());
-            }
+    async fn analyze_russian(&self, text: &str) -> Result<RussianMorphology> {
+        // בדיקה במטמון
+        if let Some(cached) = self.morphology_cache.get_russian(text) {
+            return Ok(cached);
         }
         
-        Ok(identified)
+        // ניתוח חדש
+        let analysis = self.russian_analyzer.analyze(text)
+            .map_err(|e| anyhow::anyhow!("שגיאת ניתוח מורפולוגי ברוסית: {}", e))?;
+        
+        // שמירה במטמון
+        self.morphology_cache.set_russian(text.to_string(), analysis.clone());
+        
+        Ok(analysis)
     }
 
-    pub async fn replace_terms(&self, text: &str, _terms: &[TechnicalTerm]) -> Result<String, TranslationError> {
-        // TODO: יישום החלפת מונחים
+    async fn adjust_grammar(
+        &self,
+        text: &str,
+        source_lang: &str,
+        target_lang: &str,
+        source_analysis: &(impl Into<HebrewMorphology> + Into<RussianMorphology>),
+    ) -> Result<String> {
+        let mut adjusted = text.to_string();
+        
+        match (source_lang, target_lang) {
+            ("he", "ru") => {
+                let hebrew_analysis: HebrewMorphology = source_analysis.clone().into();
+                // התאמת מין ומספר
+                if let Some(gender) = hebrew_analysis.gender {
+                    adjusted = self.adjust_russian_gender(&adjusted, gender)?;
+                }
+                if let Some(number) = hebrew_analysis.number {
+                    adjusted = self.adjust_russian_number(&adjusted, number)?;
+                }
+            }
+            ("ru", "he") => {
+                let russian_analysis: RussianMorphology = source_analysis.clone().into();
+                // התאמת מין ומספר
+                if let Some(gender) = russian_analysis.gender {
+                    adjusted = self.adjust_hebrew_gender(&adjusted, gender)?;
+                }
+                if let Some(number) = russian_analysis.number {
+                    adjusted = self.adjust_hebrew_number(&adjusted, number)?;
+                }
+            }
+            _ => return Err(anyhow::anyhow!("צמד שפות לא נתמך")),
+        }
+        
+        Ok(adjusted)
+    }
+
+    fn adjust_russian_gender(&self, text: &str, gender: Gender) -> Result<String> {
+        // TODO: יישום התאמת מין ברוסית
+        Ok(text.to_string())
+    }
+
+    fn adjust_russian_number(&self, text: &str, number: Number) -> Result<String> {
+        // TODO: יישום התאמת מספר ברוסית
+        Ok(text.to_string())
+    }
+
+    fn adjust_hebrew_gender(&self, text: &str, gender: Gender) -> Result<String> {
+        // TODO: יישום התאמת מין בעברית
+        Ok(text.to_string())
+    }
+
+    fn adjust_hebrew_number(&self, text: &str, number: Number) -> Result<String> {
+        // TODO: יישום התאמת מספר בעברית
         Ok(text.to_string())
     }
 }
 
-impl LearningManager {
-    pub async fn new() -> Result<Self, TranslationError> {
-        Ok(Self {
-            model: Arc::new(Mutex::new(LearningModel::new())),
-            history: Arc::new(Mutex::new(Vec::new())),
-        })
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_translation_with_morphology() {
+        let engine = TranslationEngine::new().await.unwrap();
+        
+        // בדיקת תרגום מעברית לרוסית
+        let result = engine.translate("הספר הזה", "he", "ru").await;
+        assert!(result.is_ok());
+        
+        // בדיקת תרגום מרוסית לעברית
+        let result = engine.translate("эта книга", "ru", "he").await;
+        assert!(result.is_ok());
     }
 
-    pub async fn improve_translation(&self, text: &str) -> Result<String, TranslationError> {
-        let model = self.model.lock().unwrap();
-        let improved = model.improve(text);
-        Ok(improved)
+    #[tokio::test]
+    async fn test_morphological_analysis() {
+        let engine = TranslationEngine::new().await.unwrap();
+        
+        // בדיקת ניתוח מורפולוגי בעברית
+        let result = engine.analyze_hebrew("ספרים").await;
+        assert!(result.is_ok());
+        let analysis = result.unwrap();
+        assert_eq!(analysis.number, Some(Number::Plural));
+        
+        // בדיקת ניתוח מורפולוגי ברוסית
+        let result = engine.analyze_russian("книги").await;
+        assert!(result.is_ok());
+        let analysis = result.unwrap();
+        assert_eq!(analysis.number, Some(Number::Plural));
     }
 
-    pub async fn record_translation(&self, source: &str, target: &str) -> Result<(), TranslationError> {
-        let mut history = self.history.lock().unwrap();
-        history.push(TranslationRecord {
-            source: source.to_string(),
-            target: target.to_string(),
-            timestamp: chrono::Utc::now(),
-            context: TranslationContext {
-                domain: Domain::General,
-                style: Style::Formal,
-                formality: Formality::Medium,
-            },
-        });
-        Ok(())
-    }
-}
-
-impl ContextAnalyzer {
-    fn detect_domain(&self, text: &str) -> Domain {
-        // TODO: יישום זיהוי תחום
-        if text.contains("מערכת") || text.contains("התקנה") {
-            Domain::Technical
-        } else if text.contains("חוק") || text.contains("תקנה") {
-            Domain::Legal
-        } else {
-            Domain::General
-        }
-    }
-
-    fn detect_style(&self, text: &str) -> Style {
-        // TODO: יישום זיהוי סגנון
-        if text.contains("נא") || text.contains("בבקשה") {
-            Style::Casual
-        } else {
-            Style::Formal
-        }
-    }
-
-    fn detect_formality(&self, text: &str) -> Formality {
-        // TODO: יישום זיהוי רמת פורמליות
-        if text.contains("להלן") || text.contains("בהתאם") {
-            Formality::High
-        } else if text.contains("אנא") || text.contains("בבקשה") {
-            Formality::Medium
-        } else {
-            Formality::Low
-        }
-    }
-}
-
-impl TermAnalyzer {
-    fn is_term_in_text(&self, text: &str, term: &str) -> bool {
-        // TODO: יישום בדיקת נוכחות מונח
-        text.contains(term)
-    }
-}
-
-impl LearningModel {
-    fn improve(&self, text: &str) -> String {
-        // TODO: יישום שיפור תרגום
-        text.to_string()
-    }
-}
-
-impl OptimizedTranslationEngine {
-    pub fn new() -> Self {
-        let mut seq = nn::Sequential::new();
-        seq.add(nn::linear(512, 1024, Default::default()));
-        seq.add_fn(|xs| xs.relu());
-        seq.add(nn::linear(1024, 512, Default::default()));
+    #[tokio::test]
+    async fn test_grammar_adjustment() {
+        let engine = TranslationEngine::new().await.unwrap();
         
-        Self {
-            model: Arc::new(seq),
-            cache: DashMap::new(),
-            technical_terms: Arc::new(TechnicalDictionary::new()),
-            quality_control: Arc::new(QualityControl::new()),
-            tokenizer: Arc::new(Tokenizer::new()),
-        }
-    }
-
-    pub async fn translate(&self, text: &str, from: &str, to: &str) -> Result<String, TranslationError> {
-        // בדיקת מטמון מתקדמת עם TTL
-        if let Some(cached) = self.cache.get_with_ttl(text, Duration::from_secs(3600)) {
-            return Ok(cached);
-        }
-
-        // טוקניזציה והכנה לרשת
-        let tokens = self.tokenizer.encode(text)?;
-        let tensor = self.prepare_input_tensor(&tokens)?;
+        // בדיקת התאמה דקדוקית מעברית לרוסית
+        let hebrew_analysis = engine.analyze_hebrew("ספר גדול").await.unwrap();
+        let result = engine.adjust_grammar(
+            "большая книга",
+            "he",
+            "ru",
+            &hebrew_analysis,
+        ).await;
+        assert!(result.is_ok());
         
-        // העברה דרך המודל עם שימוש ב-GPU
-        let device = Device::cuda_if_available();
-        let tensor = tensor.to(device);
-        let output = self.model.forward(&tensor);
-        
-        // פענוח התוצאה
-        let translation = self.decode_output(&output)?;
-        
-        // בדיקות איכות מתקדמות
-        self.quality_control.validate_deep(&translation).await?;
-        
-        // שמירה במטמון עם מטה-דאטה
-        self.cache.insert_with_metadata(text.to_string(), translation.clone(), 
-            CacheMetadata {
-                source_lang: from.to_string(),
-                target_lang: to.to_string(),
-                timestamp: Utc::now(),
-                quality_score: self.calculate_quality_score(&translation)?,
-            }
-        );
-        
-        Ok(translation)
-    }
-
-    fn prepare_input_tensor(&self, tokens: &[i64]) -> Result<Tensor, TranslationError> {
-        let device = Device::cuda_if_available();
-        let options = (Kind::Int64, device);
-        
-        // הוספת padding אם נדרש
-        let padded = self.pad_sequence(tokens, 512);
-        
-        // יצירת טנסור
-        let tensor = Tensor::of_slice(&padded).to(device);
-        
-        // הוספת ממד האצווה
-        let tensor = tensor.unsqueeze(0);
-        
-        // הוספת מסיכת תשומת לב
-        let attention_mask = self.create_attention_mask(&tensor)?;
-        
-        Ok((tensor, attention_mask))
-    }
-
-    fn decode_output(&self, output: &Tensor) -> Result<String, TranslationError> {
-        // המרה חזרה לטוקנים
-        let logits = output.argmax(-1, false);
-        let tokens: Vec<i64> = logits.into();
-        
-        // פענוח טוקנים לטקסט
-        let text = self.tokenizer.decode(&tokens)?;
-        
-        // ניקוי וסידור סופי
-        let cleaned = self.post_process_text(&text)?;
-        
-        Ok(cleaned)
-    }
-
-    fn calculate_quality_score(&self, text: &str) -> Result<f64, TranslationError> {
-        let mut score = 0.0;
-        
-        // בדיקת שטף
-        score += self.fluency_scorer.score(text)?;
-        
-        // בדיקת דיוק
-        score += self.accuracy_scorer.score(text)?;
-        
-        // בדיקת עקביות
-        score += self.consistency_scorer.score(text)?;
-        
-        Ok(score / 3.0)
-    }
-}
-
-// מטמון משופר עם TTL ומטה-דאטה
-impl DashMap<String, CacheEntry> {
-    pub fn get_with_ttl(&self, key: &str, ttl: Duration) -> Option<String> {
-        if let Some(entry) = self.get(key) {
-            if entry.metadata.timestamp + ttl > Utc::now() {
-                Some(entry.translation.clone())
-            } else {
-                self.remove(key);
-                None
-            }
-        } else {
-            None
-        }
-    }
-
-    pub fn insert_with_metadata(&self, key: String, value: String, metadata: CacheMetadata) {
-        self.insert(key, CacheEntry {
-            translation: value,
-            metadata,
-        });
-    }
-}
-
-impl TranslationCache {
-    pub fn get_with_stats(&self, key: &str) -> Option<String> {
-        if let Some(entry) = self.entries.get(key) {
-            entry.access_count.fetch_add(1, Ordering::Relaxed);
-            self.stats.record_hit();
-            Some(entry.translation.clone())
-        } else {
-            self.stats.record_miss();
-            None
-        }
-    }
-
-    pub async fn store_with_metadata(&self, key: &str, translation: &str, context: &TranslationContext) -> Result<(), TranslationError> {
-        let entry = CacheEntry {
-            translation: translation.to_string(),
-            metadata: TranslationMetadata::new(context),
-            last_access: Utc::now(),
-            access_count: AtomicUsize::new(1),
-        };
-        
-        self.entries.insert(key.to_string(), entry);
-        self.stats.record_store();
-        Ok(())
+        // בדיקת התאמה דקדוקית מרוסית לעברית
+        let russian_analysis = engine.analyze_russian("большая книга").await.unwrap();
+        let result = engine.adjust_grammar(
+            "ספר גדול",
+            "ru",
+            "he",
+            &russian_analysis,
+        ).await;
+        assert!(result.is_ok());
     }
 } 

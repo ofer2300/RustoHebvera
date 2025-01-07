@@ -2,63 +2,53 @@
 name = "rusto_hebru"
 version = "0.1.0"
 edition = "2021"
-authors = ["Osher David"]
-description = "מערכת תרגום דו-לשונית מתקדמת לעברית ורוסית"
-
-[[bin]]
-name = "deploy_to_upgraded_version"
-path = "scripts/deploy_to_upgraded_version.rs"
+authors = ["Your Name <your.email@example.com>"]
+description = "A bilingual translation system between Hebrew and Russian for technical documents"
 
 [dependencies]
-# ניהול אסינכרוני
-tokio = { version = "1.28", features = ["full"] }
-futures = "0.3"
-
-# מבני נתונים ומצבים
+# Core dependencies
+tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"
+thiserror = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-chrono = { version = "0.4", features = ["serde"] }
 
-# הצפנה ואבטחה
-ring = "0.16"
-base64 = "0.21"
-totp-rs = "5.0"
-base32 = "0.4"
+# Neural network and machine learning
+tch = "0.13"
+rust-bert = "0.20"
 
-# ממשק משתמש
-eframe = "0.22"
-egui = "0.22"
-rfd = "0.11"
+# Text processing
+regex = "1.0"
+lazy_static = "1.4"
+unicode-segmentation = "1.10"
+whatlang = "0.16"
 
-# שגיאות וניהול
-thiserror = "1.0"
-anyhow = "1.0"
+# Async and concurrency
+futures = "0.3"
+dashmap = "5.5"
+parking_lot = "0.12"
+
+# Logging and error handling
 log = "0.4"
 env_logger = "0.10"
 
-# מטמון וביצועים
-lru = "0.10"
-dashmap = "5.4"
+# GUI
+eframe = "0.22"
+egui = "0.22"
 
-# בדיקות
-tokio-test = "0.4"
+# Testing
+criterion = "0.5"
 mockall = "0.11"
-criterion = "0.4"
-tempfile = "3.8"
-
-# תלויות לסקריפט העלאה
-colored = "2.0"
-
-winapi = { version = "0.3.9", features = ["winuser"] }
-
-# למידה עמוקה
-tch = "0.13"
 
 [dev-dependencies]
-test-case = "3.1"
-proptest = "1.2"
+tokio-test = "0.4"
+tempfile = "3.8"
 
 [profile.release]
 opt-level = 3
 lto = true
-codegen-units = 1 
+codegen-units = 1
+
+[profile.dev]
+opt-level = 0
+debug = true 
