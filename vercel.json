@@ -1,0 +1,35 @@
+{
+    "version": 2,
+    "builds": [
+        {
+            "src": "src/main.rs",
+            "use": "@vercel/rust"
+        },
+        {
+            "src": "web/**",
+            "use": "@vercel/static"
+        }
+    ],
+    "routes": [
+        {
+            "src": "/api/(.*)",
+            "dest": "src/main.rs"
+        },
+        {
+            "src": "/(.*)",
+            "dest": "web/$1"
+        }
+    ],
+    "env": {
+        "RUST_LOG": "info",
+        "DATABASE_URL": "@database-url",
+        "REDIS_URL": "@redis-url"
+    },
+    "regions": ["fra1"],
+    "functions": {
+        "src/main.rs": {
+            "memory": 1024,
+            "maxDuration": 10
+        }
+    }
+} 

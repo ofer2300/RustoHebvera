@@ -1,68 +1,116 @@
-<<<<<<< HEAD
-# RustoHebvera
+# RustoHebru - מערכת תרגום טכני דו-לשונית
 
-מערכת תרגום דו-כיוונית מתקדמת בין עברית לרוסית עבור מסמכים טכניים.
-
-![Build Status](https://github.com/ofer2300/RustoHebvera/workflows/Rust%20CI%2FCD/badge.svg)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+מערכת תרגום מתקדמת המתמחה בתרגום טכני בין עברית לרוסית, עם דגש על דיוק ואיכות בתחומים הנדסיים וטכניים.
 
 ## תכונות עיקריות
 
-- תרגום מונחים טכניים
-- תמיכה במסמכי CAD
-- ניהול מסמכים ותבניות
-- אבטחה מתקדמת
-- ממשק משתמש נוח
+- ניתוח מורפולוגי מתקדם לעברית ורוסית
+- זיהוי וטיפול במונחים טכניים
+- ממשק משתמש מודרני ונוח
+- תמיכה בלמידה מתמשכת ושיפור התרגומים
+- בקרת איכות מובנית
 
 ## דרישות מערכת
 
-- Rust 1.70.0 ומעלה
-- Windows 10/11 או Linux
-- 4GB RAM מינימום
-- 1GB שטח דיסק פנוי
+- Rust 1.70 ומעלה
+- PostgreSQL 13 ומעלה
+- Redis 6 ומעלה
+- Node.js 18 ומעלה (לפיתוח ווב)
 
 ## התקנה
 
-1. התקנת Rust:
+### התקנה מקומית
+
+1. שכפל את הריפוזיטורי:
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+git clone https://github.com/ofer2300/V4.git
+cd V4
 ```
 
-2. התקנת הספרייה:
+2. התקן את התלויות:
 ```bash
-cargo install rusto_hebru
+cargo build
 ```
 
-## שימוש
-
-```rust
-use rusto_hebru::Translator;
-
-let translator = Translator::new();
-let translated = translator.translate("שלום עולם", "he", "ru").await?;
+3. הגדר משתני סביבה:
+```bash
+cp .env.example .env
+# ערוך את .env עם הערכים המתאימים
 ```
 
-## ריעוד API
+4. הפעל את האפליקציה:
+```bash
+cargo run
+```
 
-ראו את [התיעוד המלא](docs/API.md) לפרטים נוספים.
+### פרסום באמצעות Docker
 
-## תרומה לפרויקט
+1. בנה את תמונת הדוקר:
+```bash
+docker build -t rusto-hebru .
+```
 
-אנא קראו את [מדריך התרומה](CONTRIBUTING.md) לפני שאתם מתחילים.
+2. הפעל את הקונטיינר:
+```bash
+docker run -p 8080:8080 \
+  -e DATABASE_URL=your_db_url \
+  -e REDIS_URL=your_redis_url \
+  rusto-hebru
+```
+
+### פרסום ב-Vercel
+
+1. התקן את Vercel CLI:
+```bash
+npm i -g vercel
+```
+
+2. התחבר ל-Vercel:
+```bash
+vercel login
+```
+
+3. פרסם את האפליקציה:
+```bash
+vercel --prod
+```
+
+## שימוש באפליקציה
+
+האפליקציה זמינה בכתובת: https://rusto-hebru.vercel.app
+
+### גישה ל-API
+
+נקודות קצה עיקריות:
+- `POST /api/translate`: תרגום טקסט
+- `GET /api/terms`: קבלת מונחים טכניים
+- `POST /api/feedback`: שליחת משוב
+
+דוגמה לשימוש ב-API:
+```bash
+curl -X POST https://rusto-hebru.vercel.app/api/translate \
+  -H "Content-Type: application/json" \
+  -d '{"text": "שלום", "source": "he", "target": "ru"}'
+```
+
+## ניטור וביצועים
+
+האפליקציה כוללת:
+- Prometheus metrics בכתובת `/metrics`
+- לוגים מפורטים
+- ניטור ביצועים בזמן אמת
 
 ## אבטחה
 
-ראו את [מדיניות האבטחה](SECURITY.md) שלנו.
+- כל הבקשות מוצפנות ב-HTTPS
+- הגנה מפני CSRF
+- הגבלת קצב בקשות
+- סינון קלט
 
 ## רישיון
 
-MIT © RustoHebru Team
+MIT License - ראה קובץ [LICENSE](LICENSE) למידע נוסף.
 
-## תודות
+## תרומה
 
-- תודה לצוות המפתחים והתורמים
-- תודה למשתמשים על המשוב והתמיכה
-- תודה לקהילת הקוד הפתוח 
-=======
-# RustoHebvera
->>>>>>> 555c88180dd41dd1980a01115d8ccc321cfd07c2
+אנו מעודדים תרומות! אנא קרא את [CONTRIBUTING.md](CONTRIBUTING.md) למידע נוסף.

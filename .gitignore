@@ -1,9 +1,57 @@
-/target
+# Rust
+/target/
 **/*.rs.bk
 Cargo.lock
+
+# Environment
 .env
+.env.local
+.env.*.local
+
+# IDE
 .idea/
 .vscode/
 *.swp
 *.swo
-.DS_Store 
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Dependencies
+node_modules/
+web/dist/
+
+# Build
+dist/
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Cache
+.cache/
+.vercel/
+.next/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Models and data
+models/
+data/
+*.bin
+*.pt
+*.onnx
+
+# Testing
+coverage/
+.nyc_output/
+
+# System
+.DS_Store
+Thumbs.db 
