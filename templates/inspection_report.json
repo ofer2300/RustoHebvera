@@ -1,0 +1,167 @@
+{
+    "name": "inspection_report",
+    "description": "תבנית לדוח בדיקת מערכת כיבוי אש",
+    "version": "1.0.0",
+    "template_type": "Inspection",
+    "sections": [
+        {
+            "id": "header",
+            "title": "פרטי הבדיקה",
+            "content": "תאריך: {{inspection_date}}\nמיקום: {{location}}\nמספר פרויקט: {{project_number}}",
+            "required": true,
+            "order": 1,
+            "style": "header",
+            "subsections": []
+        },
+        {
+            "id": "system_details",
+            "title": "פרטי המערכת",
+            "content": "סוג המערכת: {{system_type}}\nשנת התקנה: {{installation_year}}\nתקנים רלוונטיים: {{applicable_standards}}",
+            "required": true,
+            "order": 2,
+            "style": "section",
+            "subsections": []
+        },
+        {
+            "id": "inspection_items",
+            "title": "פריטי בדיקה",
+            "content": "{{inspection_items_table}}",
+            "required": true,
+            "order": 3,
+            "style": "section",
+            "subsections": [
+                {
+                    "id": "sprinklers",
+                    "title": "ראשי ספרינקלרים",
+                    "content": "מצב כללי: {{sprinklers_condition}}\nלחץ עבודה: {{working_pressure}}\nהערות: {{sprinklers_notes}}",
+                    "required": true,
+                    "order": 1,
+                    "style": "subsection",
+                    "subsections": []
+                },
+                {
+                    "id": "pipes",
+                    "title": "צנרת",
+                    "content": "מצב כללי: {{pipes_condition}}\nדליפות: {{leaks_found}}\nהערות: {{pipes_notes}}",
+                    "required": true,
+                    "order": 2,
+                    "style": "subsection",
+                    "subsections": []
+                },
+                {
+                    "id": "valves",
+                    "title": "מגופים",
+                    "content": "מצב כללי: {{valves_condition}}\nתקינות אינדיקציה: {{indication_status}}\nהערות: {{valves_notes}}",
+                    "required": true,
+                    "order": 3,
+                    "style": "subsection",
+                    "subsections": []
+                }
+            ]
+        },
+        {
+            "id": "findings",
+            "title": "ממצאים",
+            "content": "{{findings_list}}",
+            "required": true,
+            "order": 4,
+            "style": "section",
+            "subsections": []
+        },
+        {
+            "id": "recommendations",
+            "title": "המלצות",
+            "content": "{{recommendations_list}}",
+            "required": true,
+            "order": 5,
+            "style": "section",
+            "subsections": []
+        },
+        {
+            "id": "approval",
+            "title": "אישור",
+            "content": "שם הבודק: {{inspector_name}}\nמספר רישיון: {{license_number}}\nחתימה: _______________\nתאריך: {{approval_date}}",
+            "required": true,
+            "order": 6,
+            "style": "footer",
+            "subsections": []
+        }
+    ],
+    "placeholders": {
+        "inspection_date": "Date",
+        "location": "Text",
+        "project_number": "Text",
+        "system_type": "Text",
+        "installation_year": "Number",
+        "applicable_standards": "List",
+        "inspection_items_table": "Table",
+        "sprinklers_condition": "Text",
+        "working_pressure": "Text",
+        "sprinklers_notes": "Text",
+        "pipes_condition": "Text",
+        "leaks_found": "Text",
+        "pipes_notes": "Text",
+        "valves_condition": "Text",
+        "indication_status": "Text",
+        "valves_notes": "Text",
+        "findings_list": "List",
+        "recommendations_list": "List",
+        "inspector_name": "Text",
+        "license_number": "Text",
+        "approval_date": "Date"
+    },
+    "styles": {
+        "fonts": {
+            "default": {
+                "family": "David CLM",
+                "size": 12.0,
+                "weight": "normal",
+                "style": "normal"
+            },
+            "header": {
+                "family": "David CLM",
+                "size": 14.0,
+                "weight": "bold",
+                "style": "normal"
+            },
+            "title": {
+                "family": "David CLM",
+                "size": 16.0,
+                "weight": "bold",
+                "style": "normal"
+            }
+        },
+        "colors": {
+            "text": "#000000",
+            "heading": "#333333",
+            "table_header": "#F5F5F5",
+            "table_border": "#CCCCCC"
+        },
+        "spacing": {
+            "line_spacing": 1.5,
+            "paragraph_spacing": 1.0,
+            "margin_top": 20.0,
+            "margin_bottom": 20.0,
+            "margin_left": 25.0,
+            "margin_right": 25.0
+        },
+        "page_layout": {
+            "size": "A4",
+            "orientation": "portrait",
+            "margins": {
+                "line_spacing": 1.0,
+                "paragraph_spacing": 1.0,
+                "margin_top": 25.4,
+                "margin_bottom": 25.4,
+                "margin_left": 25.4,
+                "margin_right": 25.4
+            },
+            "header_height": 12.7,
+            "footer_height": 12.7
+        }
+    },
+    "rtl": true,
+    "default_language": "he",
+    "supported_languages": ["he", "ru"],
+    "default_metadata": null
+} 
