@@ -1,106 +1,74 @@
-use std::process::{Command, Output};
-use std::error::Error;
+use std::process::Command;
 use colored::*;
 
-fn main() -> Result<(), Box<dyn Error>> {
-    println!("{}", "מתחיל תהליך העלאה לענף upgraded-version...".green());
+fn main() {
+    println!("מתחיל תהליך העלאה לענף upgraded-version...");
 
-    // בדיקה אם אנחנו בתיקיית הפרויקט
-    if !std::path::Path::new("Cargo.toml").exists() {
-        return Err("שגיאה: יש להריץ את הסקריפט מתיקיית הפרויקט הראשית".into());
-    }
-
-    // בדיקה אם קיים רפוזיטורי git
-    if !std::path::Path::new(".git").exists() {
-        println!("{}", "מאתחל רפוזיטורי git חדש...".yellow());
-        run_command("git", &["init"])?;
-    }
-
-    // בדיקת חיבור לרפוזיטורי מרוחק
-    let remote_exists = Command::new("git")
-        .args(&["remote", "get-url", "origin"])
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false);
-
-    if !remote_exists {
-        println!("{}", "מוסיף remote למאגר...".yellow());
-        run_command(
-            "git",
-            &["remote", "add", "origin", "https://github.com/ofer2300/RustoHebvera.git"],
-        )?;
-    }
-
-    // בדיקה אם הענף upgraded-version קיים
+    // בדיקה אם הענף קיים
     let branch_exists = Command::new("git")
         .args(&["branch", "--list", "upgraded-version"])
-        .output()?
+        .output()
+        .expect("שגיאה בבדיקת קיום הענף")
         .stdout
         .len() > 0;
 
     if !branch_exists {
-        println!("{}", "יוצר ענף upgraded-version חדש...".yellow());
-        run_command("git", &["checkout", "-b", "upgraded-version"])?;
+        println!("יוצר ענף upgraded-version חדש...");
+        if let Err(e) = Command::new("git")
+            .args(&["checkout", "-b", "upgraded-version"])
+            .status() {
+            eprintln!("{}", format!("שגיאה ביצירת הענף: {}", e).red());
+            std::process::exit(1);
+        }
     } else {
-        println!("{}", "עובר לענף upgraded-version...".yellow());
-        run_command("git", &["checkout", "upgraded-version"])?;
+        println!("עובר לענף upgraded-version...");
+        if let Err(e) = Command::new("git")
+            .args(&["checkout", "upgraded-version"])
+            .status() {
+            eprintln!("{}", format!("שגיאה במעבר לענף: {}", e).red());
+            std::process::exit(1);
+        }
     }
 
-    // הוספת כל הקבצים החדשים והשינויים
-    println!("{}", "מוסיף את כל השינויים...".yellow());
-    run_command("git", &["add", "."])?;
+    // משיכת שינויים מהשרת
+    println!("מושך שינויים מהשרת...");
+    if let Err(e) = Command::new("git")
+        .args(&["pull", "origin", "upgraded-version"])
+        .status() {
+        eprintln!("{}", format!("שגיאה במשיכת שינויים: {}", e).red());
+        // ממשיכים גם אם יש שגיאה במשיכה, כי ייתכן שהענף לא קיים בשרת
+    }
 
-    // בדיקה אם יש שינויים להעלות
-    let status = Command::new("git")
-        .args(&["status", "--porcelain"])
-        .output()?;
-
-    if status.stdout.is_empty() {
-        println!("{}", "אין שינויים להעלות".blue());
-        return Ok(());
+    // הוספת כל השינויים
+    println!("מוסיף את כל השינויים...");
+    if let Err(e) = Command::new("git")
+        .args(&["add", "."])
+        .status() {
+        eprintln!("{}", format!("שגיאה בהוספת שינויים: {}", e).red());
+        std::process::exit(1);
     }
 
     // יצירת קומיט
-    let commit_message = format!(
-        "עדכון גרסה {} - {}",
-        chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
-        "שדרוג מערכת התרגום והוספת בקרת איכות"
-    );
-    
-    println!("{}", "יוצר קומיט...".yellow());
-    run_command("git", &["commit", "-m", &commit_message])?;
+    println!("יוצר קומיט...");
+    if let Err(e) = Command::new("git")
+        .args(&["commit", "-m", "עדכון גרסה"])
+        .status() {
+        eprintln!("{}", format!("שגיאה ביצירת קומיט: {}", e).red());
+        std::process::exit(1);
+    }
 
-    // דחיפה לשרת
-    println!("{}", "דוחף שינויים לשרת...".yellow());
+    // דחיפת שינויים לשרת
+    println!("דוחף שינויים לשרת...");
     let push_result = Command::new("git")
         .args(&["push", "-u", "origin", "upgraded-version"])
-        .output();
+        .output()
+        .expect("שגיאה בדחיפה לשרת");
 
-    match push_result {
-        Ok(output) => {
-            if output.status.success() {
-                println!("{}", "העלאה הושלמה בהצלחה!".green());
-                println!("הענף upgraded-version עודכן בהצלחה");
-            } else {
-                let error = String::from_utf8_lossy(&output.stderr);
-                return Err(format!("שגיאה בדחיפה לשרת: {}", error).into());
-            }
-        }
-        Err(e) => {
-            return Err(format!("שגיאה בדחיפה לשרת: {}", e).into());
-        }
+    if !push_result.status.success() {
+        let error_message = String::from_utf8_lossy(&push_result.stderr);
+        eprintln!("{}", format!("שגיאה בדחיפה לשרת: {}", error_message).red());
+        std::process::exit(1);
     }
 
-    Ok(())
-}
-
-fn run_command(cmd: &str, args: &[&str]) -> Result<Output, Box<dyn Error>> {
-    let output = Command::new(cmd).args(args).output()?;
-
-    if !output.status.success() {
-        let error = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("שגיאה בהרצת פקודה {}: {}", cmd, error).into());
-    }
-
-    Ok(output)
+    println!("{}", "העלאה הושלמה בהצלחה!".green());
 } 
