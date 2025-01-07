@@ -2,34 +2,22 @@
     "version": 2,
     "builds": [
         {
-            "src": "src/main.rs",
-            "use": "@vercel/rust"
+            "src": "static/**",
+            "use": "@vercel/static"
         },
         {
-            "src": "web/**",
-            "use": "@vercel/static"
+            "src": "target/release/rustohebru",
+            "use": "@vercel/rust"
         }
     ],
     "routes": [
         {
-            "src": "/api/(.*)",
-            "dest": "src/main.rs"
+            "src": "/(.*)",
+            "dest": "/static/$1"
         },
         {
-            "src": "/(.*)",
-            "dest": "web/$1"
+            "src": "/api/(.*)",
+            "dest": "/target/release/rustohebru"
         }
-    ],
-    "env": {
-        "RUST_LOG": "info",
-        "DATABASE_URL": "@database-url",
-        "REDIS_URL": "@redis-url"
-    },
-    "regions": ["fra1"],
-    "functions": {
-        "src/main.rs": {
-            "memory": 1024,
-            "maxDuration": 10
-        }
-    }
+    ]
 } 
