@@ -108,7 +108,7 @@ impl ModernGui {
             ui.add_space(10.0);
             
             // אזור טקסט מקור
-            ui.group(|ui| {
+                    ui.group(|ui| {
                 ui.label(RichText::new("טקסט מקור").size(16.0));
                 ui.add_sized(
                     [ui.available_width(), 150.0],
@@ -132,7 +132,7 @@ impl ModernGui {
                     TextEdit::multiline(&mut self.target_text)
                         .text_color(if self.is_processing {
                             Color32::GRAY
-                        } else {
+                                } else {
                             Color32::WHITE
                         })
                 );
@@ -147,7 +147,7 @@ impl ModernGui {
             self.render_feedback_section(ui);
             
             // כפתורים נוספים
-            ui.horizontal(|ui| {
+                            ui.horizontal(|ui| {
                 if ui.button("הגדרות מתקדמות").clicked() {
                     self.show_advanced = !self.show_advanced;
                 }
@@ -167,7 +167,7 @@ impl ModernGui {
     }
 
     fn render_language_selector(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
+                ui.horizontal(|ui| {
             ui.label("שפת מקור:");
             ui.selectable_value(&mut self.source_language, Language::Hebrew, "עברית");
             ui.selectable_value(&mut self.source_language, Language::Russian, "רוסית");
@@ -186,20 +186,20 @@ impl ModernGui {
     }
 
     fn render_validation_results(&mut self, ui: &mut Ui, report: &ValidationReport) {
-        ui.group(|ui| {
+                ui.group(|ui| {
             ui.label(RichText::new("תוצאות בדיקת איכות").size(16.0));
-            
-            ui.horizontal(|ui| {
+
+                ui.horizontal(|ui| {
                 ui.label("ציון דקדוק:");
                 ui.label(format!("{:.1}%", report.grammar_score * 100.0));
-            });
-            
-            ui.horizontal(|ui| {
+                });
+
+                ui.horizontal(|ui| {
                 ui.label("ציון סגנון:");
                 ui.label(format!("{:.1}%", report.style_score * 100.0));
-            });
-            
-            ui.horizontal(|ui| {
+                });
+
+                ui.horizontal(|ui| {
                 ui.label("ציון מונחים:");
                 ui.label(format!("{:.1}%", report.terminology_score * 100.0));
             });
@@ -221,11 +221,11 @@ impl ModernGui {
     }
 
     fn render_feedback_section(&mut self, ui: &mut Ui) {
-        ui.group(|ui| {
+                    ui.group(|ui| {
             ui.label(RichText::new("משוב").size(16.0));
             
             // דירוג
-            ui.horizontal(|ui| {
+                        ui.horizontal(|ui| {
                 ui.label("דירוג:");
                 for rating in 1..=5 {
                     if ui.selectable_label(
@@ -238,7 +238,7 @@ impl ModernGui {
             });
             
             // הערות
-            ui.label("הערות:");
+                        ui.label("הערות:");
             ui.text_edit_multiline(&mut self.user_comments);
             
             if ui.button("שלח משוב").clicked() {
@@ -309,7 +309,7 @@ impl ModernGui {
                 rating,
                 comments: if self.user_comments.is_empty() {
                     None
-                } else {
+                            } else {
                     Some(self.user_comments.clone())
                 },
                 corrections: None,
@@ -329,9 +329,9 @@ impl ModernGui {
             tokio::spawn(async move {
                 learning_manager.record_event(event).await?;
                 Ok::<_, anyhow::Error>(())
-            });
-        }
-    }
+                        });
+                    }
+                }
 
     fn update_theme(&self, ctx: &egui::Context) {
         let mut visuals = if self.dark_mode {
