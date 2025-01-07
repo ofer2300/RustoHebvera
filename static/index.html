@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RustoHebru - תרגום הנדסי רוסית-עברית</title>
-    <base href="/RustoHebvera/">
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -74,7 +73,6 @@
     </div>
 
     <script>
-        const API_URL = 'https://api.rustohebru.com/translate';
         const MOCK_MODE = true; // מצב הדגמה
 
         async function translate() {
@@ -93,12 +91,17 @@
                 if (MOCK_MODE) {
                     // הדגמה - תרגום מדומה
                     await new Promise(resolve => setTimeout(resolve, 1000));
-                    output.value = `תרגום הדגמה: ${input.value}`;
+                    const demoTranslation = input.value
+                        .split('')
+                        .reverse()
+                        .join('')
+                        .replace(/[a-zA-Z]/g, 'א');
+                    output.value = `תרגום הדגמה: ${demoTranslation}`;
                     status.textContent = 'התרגום הושלם בהצלחה';
                     return;
                 }
 
-                const response = await fetch(API_URL, {
+                const response = await fetch('/api/translate', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

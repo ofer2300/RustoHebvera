@@ -7,6 +7,8 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v2
 
@@ -19,15 +21,15 @@ jobs:
       - name: Build
         run: cargo build --release
 
-      - name: Copy static files
+      - name: Prepare static files
         run: |
           mkdir -p dist
+          cp static/index.html dist/index.html
           cp -r static/* dist/
-          cp target/release/rustohebru dist/
-          cp target/release/index.html dist/
 
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dist 
+          publish_dir: ./dist
+          force_orphan: true 
