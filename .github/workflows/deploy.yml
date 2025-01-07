@@ -21,11 +21,16 @@ jobs:
       - name: Build
         run: cargo build --release
 
-      - name: Prepare static files
+      - name: Create dist directory
         run: |
           mkdir -p dist
-          cp static/index.html dist/index.html
           cp -r static/* dist/
+          cp target/release/rustohebru dist/ || true
+
+      - name: Configure Pages
+        run: |
+          echo "/* /index.html 200" > dist/_redirects
+          echo "baseUrl=/RustoHebvera/" > dist/config.js
 
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v3

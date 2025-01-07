@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RustoHebru - תרגום הנדסי רוסית-עברית</title>
+    <base href="/RustoHebvera/">
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -73,6 +74,17 @@
     </div>
 
     <script>
+        let baseUrl = '';
+        fetch('config.js')
+            .then(response => response.text())
+            .then(text => {
+                const match = text.match(/baseUrl=(.+)/);
+                if (match) {
+                    baseUrl = match[1];
+                }
+            })
+            .catch(console.error);
+
         const MOCK_MODE = true; // מצב הדגמה
 
         async function translate() {
@@ -101,7 +113,7 @@
                     return;
                 }
 
-                const response = await fetch('/api/translate', {
+                const response = await fetch(baseUrl + 'api/translate', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
